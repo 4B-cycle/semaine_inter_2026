@@ -9,19 +9,25 @@ import {
   AlertCircle,
   Check,
   X,
+  UserPlus,
 } from "lucide-react";
 
 export default function Home() {
+  // AJOUT : Le nouvel état "needs_contact"
   const [status, setStatus] = useState<
-    "idle" | "listening" | "thinking" | "confirming" | "executing"
+    | "idle"
+    | "listening"
+    | "thinking"
+    | "confirming"
+    | "executing"
+    | "needs_contact"
   >("idle");
   const [aiResponse, setAiResponse] = useState<any>(null);
   const recognitionRef = useRef<any>(null);
 
-  // Simulation d'un carnet d'adresses (On pourra y ajouter navigator.contacts plus tard)
+  // Carnet d'adresses vide, prêt à apprendre
   const [contacts, setContacts] = useState<Record<string, string>>({});
 
-  // --- SYNTHÈSE VOCALE AVEC CALLBACK ---
   const speak = (text: string, callback?: () => void) => {
     if (typeof window !== "undefined" && "speechSynthesis" in window) {
       window.speechSynthesis.cancel();
@@ -48,7 +54,6 @@ export default function Home() {
         reco.onresult = async (event: any) => {
           const text = event.results[0][0].transcript.toLowerCase();
 
-          // LOGIQUE DE DÉCISION
           if (status === "confirming") {
             handleConfirmation(text);
           } else {
@@ -57,7 +62,6 @@ export default function Home() {
         };
 
         reco.onend = () => {
-          // On ne remet à idle que si on n'est pas en train d'attendre une confirmation
           if (status === "listening") setStatus("idle");
         };
 
@@ -66,7 +70,6 @@ export default function Home() {
     }
   }, [status, aiResponse]);
 
-  // Étape 1 : Analyse de l'intention via Gemini
   const analyzeText = async (text: string) => {
     setStatus("thinking");
     try {
@@ -85,7 +88,6 @@ export default function Home() {
             ? `Veux-tu appeler ${data.contact} ?`
             : `Veux-tu envoyer un message à ${data.contact} ?`;
 
-        // On parle, puis on relance le micro automatiquement
         speak(phrase, () => {
           recognitionRef.current.start();
           setStatus("listening");
@@ -99,7 +101,6 @@ export default function Home() {
     }
   };
 
-  // Étape 2 : Gestion du Oui / Non
   const handleConfirmation = (text: string) => {
     if (
       text.includes("oui") ||
@@ -114,48 +115,68 @@ export default function Home() {
     }
   };
 
-  // Étape 3 : Exécution finale
   const executeAction = async () => {
-    setStatus("executing");
     const contactNom = aiResponse.contact.toLowerCase();
-    let numero = contacts[contactNom];
+    const numero = contacts[contactNom];
 
-    // Si numéro inconnu, on tentera d'ouvrir le répertoire (navigator.contacts)
     if (!numero) {
+      // MODIFICATION ICI : On bloque l'automatisation et on demande un vrai clic
+      setStatus("needs_contact");
       speak(
-        `Je n'ai pas le numéro de ${contactNom}. Choisis-le dans tes contacts.`,
+        `Je ne connais pas le numéro de ${contactNom}. Appuie sur l'écran pour choisir le contact.`,
       );
-      try {
-        const navAny = navigator as any;
-        if (navAny.contacts && navAny.contacts.select) {
-          const selected = await navAny.contacts.select(["name", "tel"], {
-            multiple: false,
-          });
-          if (selected.length > 0) {
-            numero = selected[0].tel[0];
-            // On le sauve pour la prochaine fois !
-            setContacts((prev) => ({ ...prev, [contactNom]: numero }));
-          }
-        }
-      } catch (e) {
-        speak("Je n'ai pas pu ouvrir tes contacts.");
-      }
+      return; // On arrête la fonction ici, on attend le clic de l'utilisateur
     }
 
-    if (numero) {
-      speak("C'est parti.");
-      setTimeout(() => {
-        if (aiResponse.action === "APPELER") {
-          window.location.href = `tel:${numero}`;
+    // Si on a déjà le numéro, on appelle direct
+    lancerAppel(numero);
+  };
+
+  // NOUVELLE FONCTION : Liée à un vrai clic (Autorisée par Android !)
+  const openContactPicker = async () => {
+    try {
+      const navAny = navigator as any;
+      if (navAny.contacts && navAny.contacts.select) {
+        const selected = await navAny.contacts.select(["name", "tel"], {
+          multiple: false,
+        });
+
+        if (selected.length > 0) {
+          const nouveauNumero = selected[0].tel[0];
+          const contactNom = aiResponse.contact.toLowerCase();
+
+          // On sauvegarde dans la mémoire
+          setContacts((prev) => ({ ...prev, [contactNom]: nouveauNumero }));
+
+          // On lance l'appel
+          lancerAppel(nouveauNumero);
         } else {
-          window.location.href = `sms:${numero}?body=${encodeURIComponent(aiResponse.contenu || "")}`;
+          setStatus("idle"); // L'utilisateur a fermé sans choisir
         }
+      } else {
+        alert(
+          "Ton téléphone ne supporte pas l'ouverture automatique du répertoire.",
+        );
         setStatus("idle");
-        setAiResponse(null);
-      }, 1000);
-    } else {
+      }
+    } catch (e) {
+      speak("Je n'ai pas pu ouvrir tes contacts.");
       setStatus("idle");
     }
+  };
+
+  const lancerAppel = (numero: string) => {
+    setStatus("executing");
+    speak("C'est parti.");
+    setTimeout(() => {
+      if (aiResponse.action === "APPELER") {
+        window.location.href = `tel:${numero}`;
+      } else {
+        window.location.href = `sms:${numero}?body=${encodeURIComponent(aiResponse.contenu || "")}`;
+      }
+      setStatus("idle");
+      setAiResponse(null);
+    }, 1000);
   };
 
   const toggleListen = () => {
@@ -194,16 +215,32 @@ export default function Home() {
         {status === "executing" && (
           <p className="text-3xl font-bold text-green-600">J'appelle...</p>
         )}
+
+        {/* NOUVEAU BOUTON : Affiché uniquement quand le numéro manque */}
+        {status === "needs_contact" && (
+          <button
+            onClick={openContactPicker}
+            className="flex flex-col items-center justify-center p-6 bg-orange-500 rounded-3xl shadow-xl animate-bounce"
+          >
+            <UserPlus className="w-16 h-16 text-white mb-2" />
+            <p className="text-xl font-bold text-white uppercase">
+              Associer un contact
+            </p>
+          </button>
+        )}
       </div>
 
-      <button
-        onClick={toggleListen}
-        className={`w-64 h-64 rounded-full shadow-2xl transition-all duration-500 flex items-center justify-center
-          ${status === "listening" ? "bg-red-500 scale-110" : "bg-blue-600 active:scale-95"}
-        `}
-      >
-        <Mic className="w-32 h-32 text-white" />
-      </button>
+      {/* On cache le micro si on attend un clic sur les contacts */}
+      {status !== "needs_contact" && (
+        <button
+          onClick={toggleListen}
+          className={`w-64 h-64 rounded-full shadow-2xl transition-all duration-500 flex items-center justify-center
+            ${status === "listening" ? "bg-red-500 scale-110" : "bg-blue-600 active:scale-95"}
+          `}
+        >
+          <Mic className="w-32 h-32 text-white" />
+        </button>
+      )}
     </main>
   );
 }
