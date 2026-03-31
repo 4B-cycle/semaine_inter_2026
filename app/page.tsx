@@ -19,10 +19,7 @@ export default function Home() {
   const recognitionRef = useRef<any>(null);
 
   // Simulation d'un carnet d'adresses (On pourra y ajouter navigator.contacts plus tard)
-  const [contacts, setContacts] = useState<Record<string, string>>({
-    maman: "+33600000000",
-    papa: "+33611111111",
-  });
+  const [contacts, setContacts] = useState<Record<string, string>>({});
 
   // --- SYNTHÈSE VOCALE AVEC CALLBACK ---
   const speak = (text: string, callback?: () => void) => {
