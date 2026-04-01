@@ -3,7 +3,6 @@
 import { useState, useEffect, useRef } from "react";
 import { Mic, Loader2, Check, X, Settings, Plus, Trash2 } from "lucide-react";
 import { Capacitor } from "@capacitor/core";
-// @ts-expect-error - Ignore l'erreur TS si le module n'est pas encore bien lié par l'éditeur
 import { Contacts } from "@capacitor-community/contacts";
 
 export default function Home() {
@@ -296,11 +295,15 @@ export default function Home() {
       } else if (data.action !== "INCONNU" && data.contact) {
         setStatus("confirming");
         let phrase = "";
+
         if (data.action === "APPELER") {
           phrase = `Veux-tu appeler ${data.contact} ?`;
         } else if (data.action === "MESSAGE") {
           phrase = `Veux-tu envoyer à ${data.contact} le message suivant : ${data.contenu} ?`;
+        } else if (data.action === "WHATSAPP") {
+          phrase = `Veux-tu envoyer un WhatsApp à ${data.contact} avec le message : ${data.contenu} ?`;
         }
+
         speak(phrase, () => {
           recognitionRef.current.start();
           setStatus("listening");
@@ -313,7 +316,6 @@ export default function Home() {
       setStatus("idle");
     }
   };
-
   const handleConfirmation = (text: string) => {
     if (
       text.includes("oui") ||
@@ -329,7 +331,15 @@ export default function Home() {
   };
 
   const executeAction = () => {
-    const contactNom = aiResponse.contact.toLowerCase();
+    // Sécurité : On s'assure que Gemini a bien renvoyé un nom de contact
+    if (!aiResponse || !aiResponse.contact) {
+      speak("Désolé, je n'ai pas bien compris le nom du contact.");
+      setStatus("idle");
+      return;
+    }
+
+    // Le .trim() est vital : il enlève les espaces invisibles (ex: "papa " devient "papa")
+    const contactNom = aiResponse.contact.toLowerCase().trim();
     const numero = contacts[contactNom];
 
     if (!numero) {
@@ -349,13 +359,19 @@ export default function Home() {
       if (aiResponse.action === "APPELER") {
         window.location.href = `tel:${numero}`;
       } else if (aiResponse.action === "WHATSAPP") {
-        // Ouvre WhatsApp avec le numéro et le texte pré-rempli
+        // WhatsApp a besoin du format international (ex: 33612345678 au lieu de 0612345678)
+        let formatWa = numero;
+        if (formatWa.startsWith("0")) {
+          formatWa = "33" + formatWa.substring(1);
+        }
         const message = encodeURIComponent(aiResponse.contenu || "");
-        window.location.href = `whatsapp://send?phone=${numero}&text=${message}`;
+        window.location.href = `whatsapp://send?phone=${formatWa}&text=${message}`;
       } else {
+        // SMS Classique
         const message = encodeURIComponent(aiResponse.contenu || "");
         window.location.href = `sms:${numero}?body=${message}`;
       }
+
       setStatus("idle");
       setAiResponse(null);
     }, 1000);
