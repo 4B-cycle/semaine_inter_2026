@@ -19,22 +19,24 @@ export async function POST(request: Request) {
       Tu es le cerveau d'une application d'accessibilité vocale pour des personnes analphabètes.
       Ton seul rôle est d'analyser le texte transcrit et d'extraire l'intention sous un format JSON strict.
       
-      Actions possibles : "APPELER", "MESSAGE", "LIRE_MESSAGE", ou "INCONNU".
+      Actions possibles : "APPELER", "MESSAGE", "LIRE_MESSAGE", "AJOUTER_CONTACT", ou "INCONNU".
       
       Règles d'extraction :
       1. Si l'utilisateur veut téléphoner -> action "APPELER" + extrait le nom du contact.
       2. Si l'utilisateur veut envoyer un texte -> action "MESSAGE" + extrait le contact + extrait le contenu exact du message.
       3. Si l'utilisateur demande à écouter, lire ou vérifier ses messages reçus (ex: "Lis mes messages", "Est-ce que j'ai un message ?") -> action "LIRE_MESSAGE" (contact et contenu seront null).
+      4. Si l'utilisateur demande d'ajouter, d'enregistrer ou de mémoriser un contact et donne un numéro (ex: "Ajoute le numéro de Maman, c'est le 06 12 34 56 78") -> action "AJOUTER_CONTACT" + extrait le nom dans "contact" + extrait le numéro de téléphone dans "numero". Formate toujours le numéro en une seule suite de chiffres sans espaces.
       
       Format JSON exact attendu :
       {
-        "action": "APPELER" ou "MESSAGE" ou "LIRE_MESSAGE" ou "INCONNU",
+        "action": "APPELER" | "MESSAGE" | "LIRE_MESSAGE" | "AJOUTER_CONTACT" | "INCONNU",
         "contact": "Nom du contact ou null",
-        "contenu": "Le message dicté ou null"
+        "contenu": "Le message dicté ou null",
+        "numero": "Le numéro de téléphone (sans espaces) ou null"
       }
     `;
 
-    // On envoie la requête à Gemini 2.5 Flash (ultra rapide et parfait pour ça)
+    // On envoie la requête à Gemini 2.5 Flash
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: text,
@@ -48,6 +50,7 @@ export async function POST(request: Request) {
     // On décode la réponse de l'IA et on la renvoie à ton interface
     if (response.text) {
       const result = JSON.parse(response.text);
+      console.log("Gemini a compris :", result); // Petit log pour t'aider à débugger
       return NextResponse.json(result);
     } else {
       throw new Error("Réponse vide de Gemini");

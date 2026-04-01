@@ -178,7 +178,36 @@ export default function Home() {
           );
         }
         return;
-      } else if (data.action !== "INCONNU" && data.contact) {
+      }
+      // --- NOUVEAUTÉ : AJOUT DE CONTACT VOCAL ---
+      else if (
+        data.action === "AJOUTER_CONTACT" &&
+        data.contact &&
+        data.numero
+      ) {
+        setStatus("executing");
+
+        // Nettoyage : on met le nom en minuscules et on enlève espaces/tirets/points du numéro
+        const nomPropre = data.contact.toLowerCase();
+        const numPropre = data.numero.replace(/[\s\-\.]/g, "");
+
+        // On met à jour l'état ET le stockage du téléphone
+        setContacts((prevContacts) => {
+          const updatedContacts = { ...prevContacts, [nomPropre]: numPropre };
+          localStorage.setItem("hub_contacts", JSON.stringify(updatedContacts));
+          return updatedContacts;
+        });
+
+        speak(
+          `C'est noté. Le numéro de ${data.contact} a bien été enregistré.`,
+          () => {
+            setStatus("idle");
+          },
+        );
+        return;
+      }
+      // --- FIN DE LA NOUVEAUTÉ ---
+      else if (data.action !== "INCONNU" && data.contact) {
         setStatus("confirming");
         let phrase = "";
         if (data.action === "APPELER") {
