@@ -5,35 +5,29 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
-    const { text } = body;
+    const { text } = await request.json();
 
     if (!text) {
       return NextResponse.json({ error: "Texte manquant" }, { status: 400 });
     }
 
-    // Le Prompt Système : Les instructions strictes pour l'IA
+    // Le Prompt "Béton Armé" avec des exemples clairs
     const systemInstruction = `
-      Tu es le cerveau d'une application d'accessibilité vocale pour des personnes analphabètes.
-      Ton seul rôle est d'analyser le texte transcrit et d'extraire l'intention sous un format JSON strict.
+      Tu es un assistant vocal d'accessibilité. Ton seul but est de transformer la phrase de l'utilisateur en un objet JSON strict.
       
-      Actions possibles : "APPELER", "MESSAGE", "WHATSAPP", "LIRE_MESSAGE", "IMPORTER_CONTACT", "SUPPRIMER_CONTACT", ou "INCONNU".
-      
-      Règles d'extraction :
-      1. Si l'utilisateur veut téléphoner -> action "APPELER" + extrait le nom du contact.
-      2. Si l'utilisateur veut envoyer un texte classique -> action "MESSAGE" + extrait le contact + extrait le contenu exact.
-      3. Si l'utilisateur précise qu'il veut utiliser WhatsApp (ex: "Envoie un WhatsApp à Julie pour dire bonjour") -> action "WHATSAPP" + extrait le contact + extrait le contenu.
-      4. Si l'utilisateur demande à écouter ou vérifier ses messages reçus -> action "LIRE_MESSAGE" (contact et contenu seront null).
-      5. Si l'utilisateur demande d'importer, d'aller chercher ou de trouver un contact dans son téléphone (ex: "Importe papa", "Va chercher le numéro de maman") -> action "IMPORTER_CONTACT" + extrait le nom de la personne dans "contact".
-      6. Si l'utilisateur veut effacer, oublier ou supprimer un contact (ex: "Supprime le numéro de Papa", "Oublie Julie") -> action "SUPPRIMER_CONTACT" + extrait le nom dans "contact".
-      
-      Format JSON exact attendu :
-      {
-        "action": "APPELER" | "MESSAGE" | "WHATSAPP" | "LIRE_MESSAGE" | "IMPORTER_CONTACT" | "SUPPRIMER_CONTACT" | "INCONNU",
-        "contact": "Nom du contact ou null",
-        "contenu": "Le message dicté ou null",
-        "numero": "null"
-      }
+      Actions autorisées : "APPELER", "MESSAGE", "WHATSAPP", "LIRE_MESSAGE", "IMPORTER_CONTACT", "SUPPRIMER_CONTACT", "INCONNU".
+
+      EXEMPLES DE PHRASES ET LEURS RÉPONSES EXACTES :
+      - "appelle papa" -> {"action": "APPELER", "contact": "papa", "contenu": null}
+      - "envoie un message à maman pour dire que j'arrive" -> {"action": "MESSAGE", "contact": "maman", "contenu": "j'arrive"}
+      - "envoie un whatsapp à thomas pour dire coucou" -> {"action": "WHATSAPP", "contact": "thomas", "contenu": "coucou"}
+      - "lis mes messages" -> {"action": "LIRE_MESSAGE", "contact": null, "contenu": null}
+      - "importe le contact de julie" -> {"action": "IMPORTER_CONTACT", "contact": "julie", "contenu": null}
+      - "importe papa" -> {"action": "IMPORTER_CONTACT", "contact": "papa", "contenu": null}
+      - "supprime le numéro de maman" -> {"action": "SUPPRIMER_CONTACT", "contact": "maman", "contenu": null}
+      - "quel temps fait-il ?" -> {"action": "INCONNU", "contact": null, "contenu": null}
+
+      Règle d'or : Renvoie UNIQUEMENT le JSON formaté, sans aucun texte autour.
     `;
 
     const response = await ai.models.generateContent({
@@ -47,16 +41,14 @@ export async function POST(request: Request) {
 
     if (response.text) {
       const result = JSON.parse(response.text);
-      console.log("Gemini a compris :", result);
+      // Ce log va apparaître dans Vercel, très utile pour vérifier !
+      console.log("Texte reçu par le micro:", text, "-> Décision IA:", result);
       return NextResponse.json(result);
     } else {
-      throw new Error("Réponse vide de Gemini");
+      throw new Error("Réponse vide");
     }
   } catch (error) {
-    console.error("Erreur API Gemini:", error);
-    return NextResponse.json(
-      { error: "Erreur lors de l'analyse IA" },
-      { status: 500 },
-    );
+    console.error("Erreur API:", error);
+    return NextResponse.json({ error: "Erreur IA" }, { status: 500 });
   }
 }
