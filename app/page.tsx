@@ -13,6 +13,7 @@ export default function Home() {
   const [aiResponse, setAiResponse] = useState<any>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const recognitionRef = useRef<any>(null);
+  const silenceTimerRef = useRef<any>(null);
 
   const [showSettings, setShowSettings] = useState(false);
   const [contacts, setContacts] = useState<Record<string, string>>({});
@@ -116,16 +117,34 @@ export default function Home() {
       if (SpeechRecognition) {
         const reco = new SpeechRecognition();
         reco.lang = "fr-FR";
-        reco.continuous = false;
+
+        // --- NOUVEAUTÉ 1 : On laisse le micro écouter en continu ---
+        reco.continuous = true;
+        reco.interimResults = true;
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         reco.onresult = async (event: any) => {
-          const text = event.results[0][0].transcript.toLowerCase();
-          if (status === "confirming") {
-            handleConfirmation(text);
-          } else {
-            analyzeText(text);
+          // On assemble tous les mots, même s'il y a eu une pause
+          let currentText = "";
+          for (let i = 0; i < event.results.length; i++) {
+            currentText += event.results[i][0].transcript + " ";
           }
+          currentText = currentText.toLowerCase().trim();
+
+          // On remet le chronomètre à zéro tant que la personne parle
+          if (silenceTimerRef.current) {
+            clearTimeout(silenceTimerRef.current);
+          }
+
+          // --- NOUVEAUTÉ 2 : On attend 2 secondes de silence avant d'envoyer ---
+          silenceTimerRef.current = setTimeout(() => {
+            reco.stop();
+            if (status === "confirming") {
+              handleConfirmation(currentText);
+            } else {
+              analyzeText(currentText);
+            }
+          }, 2000);
         };
 
         reco.onend = () => {
@@ -366,13 +385,17 @@ export default function Home() {
       if (aiResponse.action === "APPELER") {
         window.location.href = `tel:${numero}`;
       } else if (aiResponse.action === "WHATSAPP") {
-        // WhatsApp a besoin du format international (ex: 33612345678 au lieu de 0612345678)
-        let formatWa = numero;
+        // --- NOUVEAUTÉ 3 : Formatage propre du numéro pour WhatsApp ---
+        let formatWa = numero.replace(/[\s\-\.]/g, ""); // Enlève les espaces
         if (formatWa.startsWith("0")) {
-          formatWa = "33" + formatWa.substring(1);
+          formatWa = "33" + formatWa.substring(1); // Transforme 06 en 336
+        } else if (formatWa.startsWith("+")) {
+          formatWa = formatWa.substring(1); // Enlève le + si +336
         }
+
         const message = encodeURIComponent(aiResponse.contenu || "");
-        window.location.href = `whatsapp://send?phone=${formatWa}&text=${message}`;
+        // Lien universel officiel
+        window.location.href = `https://wa.me/${formatWa}?text=${message}`;
       } else {
         // SMS Classique
         const message = encodeURIComponent(aiResponse.contenu || "");
