@@ -309,7 +309,14 @@ export default function Home() {
           setStatus("listening");
         });
       } else {
-        speak("Je n'ai pas compris. Peux-tu répéter ?");
+        // --- ASTUCE DE DEBUGGING VOCAL ---
+        console.log("Erreur de l'IA :", data);
+        const actionRecue = data.action ? data.action : "aucune action";
+        const contactRecu = data.contact ? data.contact : "aucun contact";
+
+        speak(
+          `Je n'ai pas compris. L'intelligence artificielle a détecté l'action ${actionRecue}, avec le contact ${contactRecu}.`,
+        );
         setStatus("idle");
       }
     } catch {
