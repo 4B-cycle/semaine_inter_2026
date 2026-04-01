@@ -122,14 +122,50 @@ export default function Home() {
       const data = await response.json();
       setAiResponse(data);
 
-      if (data.action !== "INCONNU" && data.contact) {
+      // --- NOUVEAUTÉ : On gère la lecture des SMS en priorité ---
+      if (data.action === "LIRE_MESSAGE") {
+        setStatus("executing"); // On change l'état visuel
+
+        try {
+          // On interroge ta nouvelle API pour voir si MacroDroid a déposé un SMS
+          const smsReq = await fetch("/api/receive-sms");
+
+          if (smsReq.ok) {
+            const smsData = await smsReq.json();
+
+            // On cherche si le numéro correspond à un contact enregistré (ex: Maman)
+            // Comme ça l'appli ne lit pas juste "+336..." mais le vrai prénom
+            const savedName = Object.keys(contacts).find(
+              (key) => contacts[key] === smsData.sender,
+            );
+            const senderName = savedName ? savedName : smsData.sender;
+
+            speak(
+              `Tu as un message de ${senderName} qui dit : ${smsData.message}`,
+              () => {
+                setStatus("idle");
+              },
+            );
+          } else {
+            speak("Tu n'as aucun nouveau message.", () => setStatus("idle"));
+          }
+        } catch (e) {
+          speak("Désolé, je n'ai pas pu vérifier tes messages.", () =>
+            setStatus("idle"),
+          );
+        }
+
+        return; // On arrête la fonction ici, on ne va pas plus loin
+      }
+
+      // --- LE RESTE DU CODE RESTE PAREIL ---
+      else if (data.action !== "INCONNU" && data.contact) {
         setStatus("confirming");
 
         let phrase = "";
         if (data.action === "APPELER") {
           phrase = `Veux-tu appeler ${data.contact} ?`;
         } else if (data.action === "MESSAGE") {
-          // ICI : On lit le nom ET le contenu du message
           phrase = `Veux-tu envoyer à ${data.contact} le message suivant : ${data.contenu} ?`;
         }
 
