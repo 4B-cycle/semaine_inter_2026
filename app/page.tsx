@@ -158,6 +158,13 @@ export default function Home() {
   }, [status, aiResponse]);
 
   const analyzeText = async (text: string) => {
+    // SÉCURITÉ 1 : On bloque si le micro n'a rien entendu de valide
+    if (!text || text.trim() === "") {
+      speak("Je n'ai entendu aucun mot. Peux-tu répéter ?");
+      setStatus("idle");
+      return;
+    }
+
     setStatus("thinking");
     try {
       const response = await fetch(`${API_BASE_URL}/api/gemini`, {
@@ -165,7 +172,17 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text }),
       });
+
       const data = await response.json();
+
+      // SÉCURITÉ 2 : On capte les crashs du serveur Vercel
+      if (data.error) {
+        console.error("Erreur Vercel:", data.error);
+        speak("Il y a un problème de connexion avec mon cerveau IA.");
+        setStatus("idle");
+        return;
+      }
+
       setAiResponse(data);
 
       if (data.action === "LIRE_MESSAGE") {

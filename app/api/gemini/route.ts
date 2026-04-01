@@ -40,12 +40,16 @@ export async function POST(request: Request) {
     });
 
     if (response.text) {
-      const result = JSON.parse(response.text);
-      // Ce log va apparaître dans Vercel, très utile pour vérifier !
-      console.log("Texte reçu par le micro:", text, "-> Décision IA:", result);
+      const texteNettoye = response.text
+        .replace(/```json/gi, "")
+        .replace(/```/g, "")
+        .trim();
+
+      const result = JSON.parse(texteNettoye);
+      console.log("Gemini a compris :", result);
       return NextResponse.json(result);
     } else {
-      throw new Error("Réponse vide");
+      throw new Error("Réponse vide de Gemini");
     }
   } catch (error) {
     console.error("Erreur API:", error);
