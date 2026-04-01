@@ -171,12 +171,17 @@ export default function Home() {
 
     // Si on l'a, on appelle direct !
     setStatus("executing");
-    speak("C'est parti.");
+    speak(
+      aiResponse.action === "APPELER" ? "J'appelle." : "J'envoie le message.",
+    );
+
     setTimeout(() => {
       if (aiResponse.action === "APPELER") {
         window.location.href = `tel:${numero}`;
       } else {
-        window.location.href = `sms:${numero}?body=${encodeURIComponent(aiResponse.contenu || "")}`;
+        // C'est cette ligne qui ouvre l'appli SMS avec le texte déjà écrit
+        const message = encodeURIComponent(aiResponse.contenu || "");
+        window.location.href = `sms:${numero}?body=${message}`;
       }
       setStatus("idle");
       setAiResponse(null);
