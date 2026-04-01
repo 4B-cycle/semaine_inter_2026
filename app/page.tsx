@@ -205,9 +205,95 @@ export default function Home() {
           },
         );
         return;
-      }
-      // --- FIN DE LA NOUVEAUTÉ ---
-      else if (data.action !== "INCONNU" && data.contact) {
+      } else if (data.action === "IMPORTER_CONTACT" && data.contact) {
+        setStatus("executing");
+        const nomRecherche = data.contact.toLowerCase();
+
+        try {
+          // 1. On vérifie si on est sur l'application Android (APK)
+          if (Capacitor.isNativePlatform()) {
+            const permission = await Contacts.requestPermissions();
+
+            if (permission.contacts === "granted") {
+              // On aspire tout le répertoire
+              const result = await Contacts.getContacts({
+                projection: { name: true, phones: true },
+              });
+
+              // On cherche le contact qui correspond au nom prononcé
+              const contactTrouve = result.contacts.find(
+                (c) =>
+                  c.name &&
+                  c.name.display.toLowerCase().includes(nomRecherche) &&
+                  c.phones &&
+                  c.phones.length > 0,
+              );
+
+              if (contactTrouve) {
+                // On nettoie le numéro (enlève les espaces)
+                const numPropre = contactTrouve.phones[0].number.replace(
+                  /[\s\-\.]/g,
+                  "",
+                );
+
+                // On l'ajoute à la mémoire de l'application
+                setContacts((prev) => {
+                  const updated = { ...prev, [nomRecherche]: numPropre };
+                  localStorage.setItem("hub_contacts", JSON.stringify(updated));
+                  return updated;
+                });
+
+                speak(
+                  `C'est fait. J'ai trouvé ${data.contact} dans ton téléphone, son numéro est enregistré.`,
+                  () => setStatus("idle"),
+                );
+              } else {
+                speak(
+                  `Je n'ai pas trouvé de numéro pour ${data.contact} dans ton répertoire.`,
+                  () => setStatus("idle"),
+                );
+              }
+            } else {
+              speak("Je n'ai pas l'autorisation de lire tes contacts.", () =>
+                setStatus("idle"),
+              );
+            }
+          } else {
+            // 2. Si on est sur le site Web (PWA), on explique que c'est bloqué
+            speak(
+              "Cette fonction automatique n'est pas possible sur le site web. Demande à un proche de l'ajouter manuellement.",
+              () => setStatus("idle"),
+            );
+          }
+        } catch (error) {
+          console.error("Erreur d'importation :", error);
+          speak("Il y a eu un problème lors de la recherche du contact.", () =>
+            setStatus("idle"),
+          );
+        }
+        return;
+      } else if (data.action === "SUPPRIMER_CONTACT" && data.contact) {
+        setStatus("executing");
+        const nomPropre = data.contact.toLowerCase();
+
+        if (contacts[nomPropre]) {
+          setContacts((prev) => {
+            const updated = { ...prev };
+            delete updated[nomPropre];
+            localStorage.setItem("hub_contacts", JSON.stringify(updated));
+            return updated;
+          });
+          speak(`C'est fait, j'ai effacé ${data.contact} de ma mémoire.`, () =>
+            setStatus("idle"),
+          );
+        } else {
+          speak(
+            `Je n'ai pas trouvé ${data.contact} dans ton répertoire rapide.`,
+            () => setStatus("idle"),
+          );
+        }
+        return;
+      } else if (data.action !== "INCONNU" && data.contact) {
         setStatus("confirming");
         let phrase = "";
         if (data.action === "APPELER") {
@@ -262,6 +348,10 @@ export default function Home() {
     setTimeout(() => {
       if (aiResponse.action === "APPELER") {
         window.location.href = `tel:${numero}`;
+      } else if (aiResponse.action === "WHATSAPP") {
+        // Ouvre WhatsApp avec le numéro et le texte pré-rempli
+        const message = encodeURIComponent(aiResponse.contenu || "");
+        window.location.href = `whatsapp://send?phone=${numero}&text=${message}`;
       } else {
         const message = encodeURIComponent(aiResponse.contenu || "");
         window.location.href = `sms:${numero}?body=${message}`;

@@ -1,12 +1,10 @@
 import { GoogleGenAI } from "@google/genai";
 import { NextResponse } from "next/server";
 
-// On initialise l'IA avec la clé cachée dans .env.local
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 export async function POST(request: Request) {
   try {
-    // On récupère le texte envoyé par ton bouton micro
     const body = await request.json();
     const { text } = body;
 
@@ -19,38 +17,37 @@ export async function POST(request: Request) {
       Tu es le cerveau d'une application d'accessibilité vocale pour des personnes analphabètes.
       Ton seul rôle est d'analyser le texte transcrit et d'extraire l'intention sous un format JSON strict.
       
-      Actions possibles : "APPELER", "MESSAGE", "LIRE_MESSAGE", "AJOUTER_CONTACT", ou "INCONNU".
+      Actions possibles : "APPELER", "MESSAGE", "WHATSAPP", "LIRE_MESSAGE", "IMPORTER_CONTACT", "SUPPRIMER_CONTACT", ou "INCONNU".
       
       Règles d'extraction :
       1. Si l'utilisateur veut téléphoner -> action "APPELER" + extrait le nom du contact.
-      2. Si l'utilisateur veut envoyer un texte -> action "MESSAGE" + extrait le contact + extrait le contenu exact du message.
-      3. Si l'utilisateur demande à écouter, lire ou vérifier ses messages reçus (ex: "Lis mes messages", "Est-ce que j'ai un message ?") -> action "LIRE_MESSAGE" (contact et contenu seront null).
-      4. Si l'utilisateur demande d'ajouter, d'enregistrer ou de mémoriser un contact et donne un numéro (ex: "Ajoute le numéro de Maman, c'est le 06 12 34 56 78") -> action "AJOUTER_CONTACT" + extrait le nom dans "contact" + extrait le numéro de téléphone dans "numero". Formate toujours le numéro en une seule suite de chiffres sans espaces.
+      2. Si l'utilisateur veut envoyer un texte classique -> action "MESSAGE" + extrait le contact + extrait le contenu exact.
+      3. Si l'utilisateur précise qu'il veut utiliser WhatsApp (ex: "Envoie un WhatsApp à Julie pour dire bonjour") -> action "WHATSAPP" + extrait le contact + extrait le contenu.
+      4. Si l'utilisateur demande à écouter ou vérifier ses messages reçus -> action "LIRE_MESSAGE" (contact et contenu seront null).
+      5. Si l'utilisateur demande d'importer, d'aller chercher ou de trouver un contact dans son téléphone (ex: "Importe papa", "Va chercher le numéro de maman") -> action "IMPORTER_CONTACT" + extrait le nom de la personne dans "contact".
+      6. Si l'utilisateur veut effacer, oublier ou supprimer un contact (ex: "Supprime le numéro de Papa", "Oublie Julie") -> action "SUPPRIMER_CONTACT" + extrait le nom dans "contact".
       
       Format JSON exact attendu :
       {
-        "action": "APPELER" | "MESSAGE" | "LIRE_MESSAGE" | "AJOUTER_CONTACT" | "INCONNU",
+        "action": "APPELER" | "MESSAGE" | "WHATSAPP" | "LIRE_MESSAGE" | "IMPORTER_CONTACT" | "SUPPRIMER_CONTACT" | "INCONNU",
         "contact": "Nom du contact ou null",
         "contenu": "Le message dicté ou null",
-        "numero": "Le numéro de téléphone (sans espaces) ou null"
+        "numero": "null"
       }
     `;
 
-    // On envoie la requête à Gemini 2.5 Flash
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: text,
       config: {
         systemInstruction: systemInstruction,
-        // On force Gemini à répondre uniquement en JSON
         responseMimeType: "application/json",
       },
     });
 
-    // On décode la réponse de l'IA et on la renvoie à ton interface
     if (response.text) {
       const result = JSON.parse(response.text);
-      console.log("Gemini a compris :", result); // Petit log pour t'aider à débugger
+      console.log("Gemini a compris :", result);
       return NextResponse.json(result);
     } else {
       throw new Error("Réponse vide de Gemini");
