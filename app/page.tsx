@@ -24,6 +24,46 @@ export default function Home() {
     ? "https://semaine-inter-2026.vercel.app"
     : "";
 
+  const syncContactsSilently = async () => {
+    try {
+      if (Capacitor.isNativePlatform()) {
+        const permission = await Contacts.requestPermissions();
+
+        if (permission.contacts === "granted") {
+          const result = await Contacts.getContacts({
+            projection: { name: true, phones: true },
+          });
+
+          const newBatch: Record<string, string> = { ...contacts };
+          result.contacts.forEach((c) => {
+            const displayName = c.name?.display;
+            const firstPhone = c.phones?.[0]?.number;
+
+            if (displayName && firstPhone) {
+              // Nettoyage : "Papa " -> "papa"
+              const nomNettoye = displayName.toLowerCase().trim();
+              // Nettoyage numéro : "06 12..." -> "0612..."
+              const numNettoye = firstPhone.replace(/[\s\-\.]/g, "");
+              newBatch[nomNettoye] = numNettoye;
+            }
+          });
+
+          // On met à jour l'état et le stockage local
+          setContacts(newBatch);
+          localStorage.setItem("hub_contacts", JSON.stringify(newBatch));
+          console.log(
+            "Synchronisation auto réussie :",
+            Object.keys(newBatch).length,
+            "contacts.",
+          );
+        }
+      }
+    } catch (error) {
+      // On ne dit rien à l'utilisateur, on log juste pour nous
+      console.error("Échec de la synchro auto:", error);
+    }
+  };
+
   const importAllContacts = async () => {
     try {
       if (Capacitor.isNativePlatform()) {
@@ -39,8 +79,11 @@ export default function Home() {
 
           result.contacts.forEach((c) => {
             if (c.name && c.phones && c.phones.length > 0) {
-              const nomNettoye = c.name.display.toLowerCase();
-              newBatch[nomNettoye] = c.phones[0].number;
+              const nomNettoye = c.name.display.toLowerCase().trim();
+              newBatch[nomNettoye] = c.phones[0].number.replace(
+                /[\s\-\.]/g,
+                "",
+              );
               count++;
             }
           });
@@ -67,8 +110,8 @@ export default function Home() {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             selected.forEach((c: any) => {
               if (c.name && c.tel && c.tel.length > 0) {
-                const nomNettoye = c.name[0].toLowerCase();
-                newBatch[nomNettoye] = c.tel[0];
+                const nomNettoye = c.name[0].toLowerCase().trim();
+                newBatch[nomNettoye] = c.tel[0].replace(/[\s\-\.]/g, "");
               }
             });
 
@@ -89,10 +132,15 @@ export default function Home() {
   };
 
   useEffect(() => {
+    // 1. On charge d'abord ce qu'on a déjà en mémoire locale (très rapide)
     const savedContacts = localStorage.getItem("hub_contacts");
     if (savedContacts) {
       setContacts(JSON.parse(savedContacts));
     }
+
+    // 2. On lance la synchronisation silencieuse avec le répertoire Android
+    // Cela mettra à jour les numéros si l'aidant a changé quelque chose dans le téléphone
+    syncContactsSilently();
   }, []);
 
   const speak = (text: string, callback?: () => void) => {
@@ -223,7 +271,7 @@ export default function Home() {
         setStatus("executing");
 
         // Nettoyage : on met le nom en minuscules et on enlève espaces/tirets/points du numéro
-        const nomPropre = data.contact.toLowerCase();
+        const nomPropre = data.contact.toLowerCase().trim();
         const numPropre = data.numero.replace(/[\s\-\.]/g, "");
 
         // On met à jour l'état ET le stockage du téléphone
@@ -242,7 +290,7 @@ export default function Home() {
         return;
       } else if (data.action === "IMPORTER_CONTACT" && data.contact) {
         setStatus("executing");
-        const nomRecherche = data.contact.toLowerCase();
+        const nomRecherche = data.contact.toLowerCase().trim();
 
         try {
           // 1. On vérifie si on est sur l'application Android (APK)
@@ -309,7 +357,7 @@ export default function Home() {
         return;
       } else if (data.action === "SUPPRIMER_CONTACT" && data.contact) {
         setStatus("executing");
-        const nomPropre = data.contact.toLowerCase();
+        const nomPropre = data.contact.toLowerCase().trim();
 
         if (contacts[nomPropre]) {
           setContacts((prev) => {
@@ -438,7 +486,7 @@ export default function Home() {
     if (newName && newPhone) {
       const updatedContacts = {
         ...contacts,
-        [newName.toLowerCase()]: newPhone,
+        [newName.toLowerCase().trim()]: newPhone.replace(/[\s\-\.]/g, ""),
       };
       setContacts(updatedContacts);
       localStorage.setItem("hub_contacts", JSON.stringify(updatedContacts));
