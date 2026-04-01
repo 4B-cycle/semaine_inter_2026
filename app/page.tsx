@@ -1,68 +1,93 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import {
-  Mic,
-  Loader2,
-  Phone,
-  MessageSquare,
-  AlertCircle,
-  Check,
-  X,
-  Settings,
-  Plus,
-  Trash2,
-} from "lucide-react";
+import { Mic, Loader2, Check, X, Settings, Plus, Trash2 } from "lucide-react";
+import { Capacitor } from "@capacitor/core";
+// @ts-expect-error - Ignore l'erreur TS si le module n'est pas encore bien lié par l'éditeur
+import { Contacts } from "@capacitor-community/contacts";
 
 export default function Home() {
-  // Les états de l'application
   const [status, setStatus] = useState<
     "idle" | "listening" | "thinking" | "confirming" | "executing"
   >("idle");
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [aiResponse, setAiResponse] = useState<any>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const recognitionRef = useRef<any>(null);
 
-  // Gestion du mode Aidant et des contacts
   const [showSettings, setShowSettings] = useState(false);
   const [contacts, setContacts] = useState<Record<string, string>>({});
   const [newName, setNewName] = useState("");
   const [newPhone, setNewPhone] = useState("");
 
+  const API_BASE_URL = Capacitor.isNativePlatform()
+    ? "https://semaine-inter-2026.vercel.app"
+    : "";
+
   const importAllContacts = async () => {
     try {
-      const navAny = navigator as any;
-      if (navAny.contacts && navAny.contacts.select) {
-        // 'multiple: true' permet de cocher plein de gens d'un coup
-        const selected = await navAny.contacts.select(["name", "tel"], {
-          multiple: true,
-        });
+      if (Capacitor.isNativePlatform()) {
+        const permission = await Contacts.requestPermissions();
 
-        if (selected.length > 0) {
+        if (permission.contacts === "granted") {
+          const result = await Contacts.getContacts({
+            projection: { name: true, phones: true },
+          });
+
           const newBatch: Record<string, string> = { ...contacts };
+          let count = 0;
 
-          selected.forEach((c: any) => {
-            if (c.name && c.tel && c.tel.length > 0) {
-              const nomNettoye = c.name[0].toLowerCase();
-              newBatch[nomNettoye] = c.tel[0];
+          result.contacts.forEach((c) => {
+            if (c.name && c.phones && c.phones.length > 0) {
+              const nomNettoye = c.name.display.toLowerCase();
+              newBatch[nomNettoye] = c.phones[0].number;
+              count++;
             }
           });
 
           setContacts(newBatch);
           localStorage.setItem("hub_contacts", JSON.stringify(newBatch));
-          alert(`${selected.length} contacts importés avec succès !`);
+          alert(
+            `${count} contacts importés du téléphone Android avec succès !`,
+          );
+        } else {
+          alert("L'autorisation de lire les contacts a été refusée.");
         }
       } else {
-        alert(
-          "Le siphonnage automatique n'est pas supporté sur ce navigateur.",
-        );
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const navAny = navigator as any;
+        if (navAny.contacts && navAny.contacts.select) {
+          const selected = await navAny.contacts.select(["name", "tel"], {
+            multiple: true,
+          });
+
+          if (selected.length > 0) {
+            const newBatch: Record<string, string> = { ...contacts };
+
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            selected.forEach((c: any) => {
+              if (c.name && c.tel && c.tel.length > 0) {
+                const nomNettoye = c.name[0].toLowerCase();
+                newBatch[nomNettoye] = c.tel[0];
+              }
+            });
+
+            setContacts(newBatch);
+            localStorage.setItem("hub_contacts", JSON.stringify(newBatch));
+            alert(`${selected.length} contacts importés via le navigateur !`);
+          }
+        } else {
+          alert(
+            "L'importation automatique n'est pas supportée sur ce navigateur Web. Utilisez l'ajout manuel.",
+          );
+        }
       }
-    } catch (e) {
-      console.error(e);
+    } catch (error) {
+      console.error("Erreur lors de l'importation:", error);
       alert("Erreur lors de l'importation.");
     }
   };
 
-  // Au démarrage, on charge les contacts sauvegardés dans le téléphone
   useEffect(() => {
     const savedContacts = localStorage.getItem("hub_contacts");
     if (savedContacts) {
@@ -84,6 +109,7 @@ export default function Home() {
 
   useEffect(() => {
     if (typeof window !== "undefined") {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const windowAny = window as any;
       const SpeechRecognition =
         windowAny.SpeechRecognition || windowAny.webkitSpeechRecognition;
@@ -93,6 +119,7 @@ export default function Home() {
         reco.lang = "fr-FR";
         reco.continuous = false;
 
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         reco.onresult = async (event: any) => {
           const text = event.results[0][0].transcript.toLowerCase();
           if (status === "confirming") {
@@ -109,12 +136,13 @@ export default function Home() {
         recognitionRef.current = reco;
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, aiResponse]);
 
   const analyzeText = async (text: string) => {
     setStatus("thinking");
     try {
-      const response = await fetch("/api/gemini", {
+      const response = await fetch(`${API_BASE_URL}/api/gemini`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text }),
@@ -122,19 +150,14 @@ export default function Home() {
       const data = await response.json();
       setAiResponse(data);
 
-      // --- NOUVEAUTÉ : On gère la lecture des SMS en priorité ---
       if (data.action === "LIRE_MESSAGE") {
-        setStatus("executing"); // On change l'état visuel
+        setStatus("executing");
 
         try {
-          // On interroge ta nouvelle API pour voir si MacroDroid a déposé un SMS
-          const smsReq = await fetch("/api/receive-sms");
+          const smsReq = await fetch(`${API_BASE_URL}/api/receive-sms`);
 
           if (smsReq.ok) {
             const smsData = await smsReq.json();
-
-            // On cherche si le numéro correspond à un contact enregistré (ex: Maman)
-            // Comme ça l'appli ne lit pas juste "+336..." mais le vrai prénom
             const savedName = Object.keys(contacts).find(
               (key) => contacts[key] === smsData.sender,
             );
@@ -149,26 +172,20 @@ export default function Home() {
           } else {
             speak("Tu n'as aucun nouveau message.", () => setStatus("idle"));
           }
-        } catch (e) {
+        } catch {
           speak("Désolé, je n'ai pas pu vérifier tes messages.", () =>
             setStatus("idle"),
           );
         }
-
-        return; // On arrête la fonction ici, on ne va pas plus loin
-      }
-
-      // --- LE RESTE DU CODE RESTE PAREIL ---
-      else if (data.action !== "INCONNU" && data.contact) {
+        return;
+      } else if (data.action !== "INCONNU" && data.contact) {
         setStatus("confirming");
-
         let phrase = "";
         if (data.action === "APPELER") {
           phrase = `Veux-tu appeler ${data.contact} ?`;
         } else if (data.action === "MESSAGE") {
           phrase = `Veux-tu envoyer à ${data.contact} le message suivant : ${data.contenu} ?`;
         }
-
         speak(phrase, () => {
           recognitionRef.current.start();
           setStatus("listening");
@@ -177,7 +194,7 @@ export default function Home() {
         speak("Je n'ai pas compris. Peux-tu répéter ?");
         setStatus("idle");
       }
-    } catch (err) {
+    } catch {
       setStatus("idle");
     }
   };
@@ -200,7 +217,6 @@ export default function Home() {
     const contactNom = aiResponse.contact.toLowerCase();
     const numero = contacts[contactNom];
 
-    // Si le numéro n'existe pas dans notre mémoire interne
     if (!numero) {
       speak(
         `Je n'ai pas le numéro de ${contactNom} dans ma mémoire. Demande à un proche de l'ajouter.`,
@@ -209,7 +225,6 @@ export default function Home() {
       return;
     }
 
-    // Si on l'a, on appelle direct !
     setStatus("executing");
     speak(
       aiResponse.action === "APPELER" ? "J'appelle." : "J'envoie le message.",
@@ -219,7 +234,6 @@ export default function Home() {
       if (aiResponse.action === "APPELER") {
         window.location.href = `tel:${numero}`;
       } else {
-        // C'est cette ligne qui ouvre l'appli SMS avec le texte déjà écrit
         const message = encodeURIComponent(aiResponse.contenu || "");
         window.location.href = `sms:${numero}?body=${message}`;
       }
@@ -238,7 +252,6 @@ export default function Home() {
     }
   };
 
-  // --- FONCTIONS DU MODE AIDANT ---
   const handleAddContact = () => {
     if (newName && newPhone) {
       const updatedContacts = {
@@ -259,8 +272,6 @@ export default function Home() {
     localStorage.setItem("hub_contacts", JSON.stringify(updatedContacts));
   };
 
-  // --- INTERFACE DU MODE AIDANT (CACHÉE PAR DÉFAUT) ---
-  // --- INTERFACE DU MODE AIDANT (CACHÉE PAR DÉFAUT) ---
   if (showSettings) {
     return (
       <main className="flex min-h-[100dvh] flex-col bg-slate-50 p-6">
@@ -276,16 +287,15 @@ export default function Home() {
           </button>
         </div>
 
-        {/* BOUTON D'IMPORTATION GLOBALE */}
         <div className="mb-8">
           <button
             onClick={importAllContacts}
             className="w-full p-4 bg-green-600 hover:bg-green-700 text-white font-bold rounded-xl flex justify-center items-center gap-3 shadow-lg transition-transform active:scale-95"
           >
-            <Plus className="w-6 h-6" /> Importer tout le répertoire
+            <Plus className="w-6 h-6" /> Importer le répertoire
           </button>
           <p className="text-xs text-slate-400 mt-2 text-center">
-            Permet de choisir plusieurs contacts d'un coup dans Android
+            S&apos;adapte automatiquement (Application Native ou Site Web)
           </p>
         </div>
 
@@ -367,10 +377,8 @@ export default function Home() {
     );
   }
 
-  // --- INTERFACE UTILISATEUR PRINCIPALE ---
   return (
     <main className="flex h-[100dvh] flex-col items-center justify-center bg-slate-50 p-6 relative">
-      {/* Le bouton discret pour l'aidant */}
       <button
         onClick={() => setShowSettings(true)}
         className="absolute top-6 right-6 p-3 text-slate-300 hover:text-slate-500 transition-colors"
@@ -382,13 +390,12 @@ export default function Home() {
         {status === "idle" && <p className="text-2xl text-gray-400">Prêt</p>}
         {status === "listening" && (
           <p className="text-3xl font-bold text-red-500 animate-pulse">
-            Je t'écoute...
+            Je t&apos;écoute...
           </p>
         )}
         {status === "thinking" && (
           <Loader2 className="w-16 h-16 text-blue-600 animate-spin" />
         )}
-
         {status === "confirming" && (
           <div className="flex flex-col items-center gap-4">
             <div className="flex gap-8">
@@ -397,9 +404,8 @@ export default function Home() {
             </div>
           </div>
         )}
-
         {status === "executing" && (
-          <p className="text-3xl font-bold text-green-600">J'appelle...</p>
+          <p className="text-3xl font-bold text-green-600">J&apos;appelle...</p>
         )}
       </div>
 
