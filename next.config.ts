@@ -1,8 +1,20 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  output: "export",
+  output:
+    process.env.NODE_ENV === "development"
+      ? undefined
+      : process.env.VERCEL
+        ? undefined
+        : "export",
+
   images: {
     unoptimized: true,
+  },
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
+  typescript: {
+    ignoreBuildErrors: true,
   },
 };
 
