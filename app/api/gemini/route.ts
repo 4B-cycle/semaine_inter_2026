@@ -19,16 +19,16 @@ export async function POST(request: Request) {
       Tu es le cerveau d'une application d'accessibilité vocale pour des personnes analphabètes.
       Ton seul rôle est d'analyser le texte transcrit et d'extraire l'intention sous un format JSON strict.
       
-      Actions possibles : "APPELER", "MESSAGE", ou "INCONNU".
+      Actions possibles : "APPELER", "MESSAGE", "LIRE_MESSAGE", ou "INCONNU".
       
       Règles d'extraction :
-      1. Trouve l'action voulue.
-      2. Trouve le nom du contact (ex: Maman, Jean, le docteur).
-      3. S'il s'agit d'un message, extrait le contenu précis à envoyer.
+      1. Si l'utilisateur veut téléphoner -> action "APPELER" + extrait le nom du contact.
+      2. Si l'utilisateur veut envoyer un texte -> action "MESSAGE" + extrait le contact + extrait le contenu exact du message.
+      3. Si l'utilisateur demande à écouter, lire ou vérifier ses messages reçus (ex: "Lis mes messages", "Est-ce que j'ai un message ?") -> action "LIRE_MESSAGE" (contact et contenu seront null).
       
       Format JSON exact attendu :
       {
-        "action": "APPELER" ou "MESSAGE" ou "INCONNU",
+        "action": "APPELER" ou "MESSAGE" ou "LIRE_MESSAGE" ou "INCONNU",
         "contact": "Nom du contact ou null",
         "contenu": "Le message dicté ou null"
       }
