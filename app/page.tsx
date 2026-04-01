@@ -124,10 +124,14 @@ export default function Home() {
 
       if (data.action !== "INCONNU" && data.contact) {
         setStatus("confirming");
-        const phrase =
-          data.action === "APPELER"
-            ? `Veux-tu appeler ${data.contact} ?`
-            : `Veux-tu envoyer un message à ${data.contact} ?`;
+
+        let phrase = "";
+        if (data.action === "APPELER") {
+          phrase = `Veux-tu appeler ${data.contact} ?`;
+        } else if (data.action === "MESSAGE") {
+          // ICI : On lit le nom ET le contenu du message
+          phrase = `Veux-tu envoyer à ${data.contact} le message suivant : ${data.contenu} ?`;
+        }
 
         speak(phrase, () => {
           recognitionRef.current.start();
