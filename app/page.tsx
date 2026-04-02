@@ -26,11 +26,24 @@ export default function Home() {
     ? "https://semaine-inter-2026.vercel.app"
     : "";
 
-  // 1. LA FONCTION SPEAK EST BIEN LÀ (Correction du "Cannot find name 'speak'")
   const speak = (text: string, callback?: () => void) => {
     if (typeof window !== "undefined" && "speechSynthesis" in window) {
       window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(text);
+
+      // --- NOUVEAUTÉ : LE CORRECTEUR PHONÉTIQUE ---
+      let textePropre = text;
+
+      // 1. On corrige si l'IA a fait la faute d'orthographe "commente"
+      textePropre = textePropre.replace(/commente/gi, "comment");
+
+      // 2. On force la prononciation correcte en écrivant "comman" phonétiquement
+      // (Le moteur vocal le lira parfaitement sans le "t")
+      textePropre = textePropre.replace(/comment /gi, "comman ");
+
+      // (Optionnel) Tu peux rajouter d'autres corrections ici si tu remarques d'autres mots bizarres !
+      // textePropre = textePropre.replace(/un mot bizarre/gi, "la bonne prononciation");
+
+      const utterance = new SpeechSynthesisUtterance(textePropre);
       utterance.lang = "fr-FR";
       utterance.onend = () => {
         if (callback) callback();
@@ -471,7 +484,7 @@ export default function Home() {
     if (status === "idle") {
       setStatus("listening");
 
-      speak("Commen puis-je vous aidez aujourd'hui ?", () => {
+      speak("Comment puis-je vous aidez aujourd'hui ?", () => {
         if (recognitionRef.current) {
           try {
             recognitionRef.current.start();
