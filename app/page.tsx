@@ -3,12 +3,13 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Mic, Loader2, Check, X, Settings, Plus, Trash2 } from "lucide-react";
 import { Capacitor } from "@capacitor/core";
-import { Contacts } from "@capacitor-community/contacts";
-import { App } from "@capacitor/app";
 
 export default function Home() {
-  const [status, setStatus] = useState;
-  "idle" | "listening" | "thinking" | "confirming" | ("executing" > "idle");
+  const [isMounted, setIsMounted] = useState(false);
+  const [status, setStatus] = useState<
+    "idle" | "listening" | "thinking" | "confirming" | "executing"
+  >("idle");
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [aiResponse, setAiResponse] = useState<any>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -16,7 +17,7 @@ export default function Home() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const silenceTimerRef = useRef<any>(null);
 
-  // ✅ NOUVEAU : refs pour éviter les stale closures
+  // refs pour éviter les stale closures
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const aiResponseRef = useRef<any>(null);
   const statusRef = useRef<
@@ -28,7 +29,12 @@ export default function Home() {
   const [newName, setNewName] = useState("");
   const [newPhone, setNewPhone] = useState("");
 
-  // ✅ NOUVEAU : on synchronise les refs à chaque changement de state
+  // Guard SSR
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
+  // on synchronise les refs à chaque changement de state
   useEffect(() => {
     aiResponseRef.current = aiResponse;
   }, [aiResponse]);
@@ -37,30 +43,85 @@ export default function Home() {
     statusRef.current = status;
   }, [status]);
 
-  const API_BASE_URL = Capacitor.isNativePlatform()
-    ? "https://semaine-inter-2026.vercel.app"
-    : "";
+  const API_BASE_URL =
+    isMounted && Capacitor.isNativePlatform()
+      ? "https://semaine-inter-2026.vercel.app"
+      : "";
 
+  // 1. GESTION DE LA PAROLE (TTS) - Gère Native et Web
   const speak = (text: string, callback?: () => void) => {
-    if (typeof window !== "undefined" && "speechSynthesis" in window) {
-      window.speechSynthesis.cancel();
+    let textePropre = text
+      .replace(/commente/gi, "comment")
+      .replace(/comment /gi, "comman ");
 
-      let textePropre = text;
-      textePropre = textePropre.replace(/commente/gi, "comment");
-      textePropre = textePropre.replace(/comment /gi, "comman ");
+    if (isMounted && Capacitor.isNativePlatform()) {
+      import("@capacitor-community/text-to-speech").then(({ TextToSpeech }) => {
+        TextToSpeech.speak({
+          text: textePropre,
+          lang: "fr-FR",
+          rate: 1.0,
+        })
+          .then(() => {
+            if (callback) callback();
+          })
+          .catch(() => {
+            if (callback) callback();
+          });
+      });
+    } else {
+      if (typeof window !== "undefined" && "speechSynthesis" in window) {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(textePropre);
+        utterance.lang = "fr-FR";
+        utterance.onend = () => {
+          if (callback) callback();
+        };
+        window.speechSynthesis.speak(utterance);
+      }
+    }
+  };
 
-      const utterance = new SpeechSynthesisUtterance(textePropre);
-      utterance.lang = "fr-FR";
-      utterance.onend = () => {
-        if (callback) callback();
-      };
-      window.speechSynthesis.speak(utterance);
+  // 2. GESTION DE L'ÉCOUTE NATIVE ANDROID (Popup Google)
+  const listenNative = async (isConfirming: boolean) => {
+    try {
+      const { SpeechRecognition } =
+        await import("@capacitor-community/speech-recognition");
+      const perm = await SpeechRecognition.requestPermissions();
+
+      if (perm.speechRecognition !== "granted") {
+        alert("Autorisation micro refusée.");
+        setStatus("idle");
+        return;
+      }
+
+      setStatus("listening");
+      const result = await SpeechRecognition.start({
+        language: "fr-FR",
+        partialResults: false, // Attend la fin de la phrase
+        popup: true, // Affiche la popup Google (très fiable)
+      });
+
+      if (result.matches && result.matches.length > 0) {
+        const text = result.matches[0].toLowerCase().trim();
+        if (isConfirming) {
+          handleConfirmation(text);
+        } else {
+          analyzeText(text);
+        }
+      } else {
+        setStatus("idle");
+      }
+    } catch (e) {
+      console.error("Erreur écoute native:", e);
+      setStatus("idle");
     }
   };
 
   const syncContactsSilently = useCallback(async () => {
+    if (!isMounted) return;
     try {
       if (Capacitor.isNativePlatform()) {
+        const { Contacts } = await import("@capacitor-community/contacts");
         const permission = await Contacts.requestPermissions();
 
         if (permission.contacts === "granted") {
@@ -78,29 +139,21 @@ export default function Home() {
                 const nomNettoye = displayName.toLowerCase().trim();
                 const numNettoye = firstPhone.replace(/[\s\-\.]/g, "");
                 newBatch[nomNettoye] = numNettoye;
-              } catch {
-                // On ignore les erreurs en silence
-              }
+              } catch {}
             }
           });
 
           setContacts(newBatch);
           localStorage.setItem("hub_contacts", JSON.stringify(newBatch));
-          console.log(
-            "Synchronisation auto réussie :",
-            Object.keys(newBatch).length,
-            "contacts.",
-          );
         }
       }
-    } catch (error) {
-      console.error("Échec de la synchro auto:", error);
-    }
-  }, [contacts]);
+    } catch (error) {}
+  }, [contacts, isMounted]);
 
   const importAllContacts = async () => {
     try {
       if (Capacitor.isNativePlatform()) {
+        const { Contacts } = await import("@capacitor-community/contacts");
         const permission = await Contacts.requestPermissions();
 
         if (permission.contacts === "granted") {
@@ -121,9 +174,7 @@ export default function Home() {
                 const numNettoye = firstPhone.replace(/[\s\-\.]/g, "");
                 newBatch[nomNettoye] = numNettoye;
                 count++;
-              } catch {
-                console.log("Un contact a été ignoré.");
-              }
+              } catch {}
             }
           });
 
@@ -136,7 +187,6 @@ export default function Home() {
           alert("L'autorisation de lire les contacts a été refusée.");
         }
       } else {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const navAny = navigator as any;
         if (navAny.contacts && navAny.contacts.select) {
           const selected = await navAny.contacts.select(["name", "tel"], {
@@ -145,34 +195,25 @@ export default function Home() {
 
           if (selected.length > 0) {
             const newBatch: Record<string, string> = { ...contacts };
-
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             selected.forEach((c: any) => {
               if (c.name && c.tel && c.tel.length > 0) {
                 const nomNettoye = c.name[0].toLowerCase().trim();
                 newBatch[nomNettoye] = c.tel[0].replace(/[\s\-\.]/g, "");
               }
             });
-
             setContacts(newBatch);
             localStorage.setItem("hub_contacts", JSON.stringify(newBatch));
             alert(`${selected.length} contacts importés via le navigateur !`);
           }
-        } else {
-          alert(
-            "L'importation automatique n'est pas supportée sur ce navigateur Web.",
-          );
         }
       }
     } catch (error) {
-      console.error("Erreur complète:", error);
       alert("Erreur technique : " + String(error));
     }
   };
 
   useEffect(() => {
-    // ✅ Guard SSR : on vérifie qu'on est bien côté client
-    if (typeof window === "undefined") return;
+    if (!isMounted) return;
 
     const savedContacts = localStorage.getItem("hub_contacts");
     if (savedContacts) {
@@ -180,23 +221,31 @@ export default function Home() {
     }
     syncContactsSilently();
 
-    // ✅ Guard Capacitor : on n'appelle App.addListener que sur natif
-    if (!Capacitor.isNativePlatform()) return;
-
-    const handler = App.addListener("appStateChange", ({ isActive }) => {
-      if (isActive) {
-        syncContactsSilently();
+    let handler: any;
+    const initApp = async () => {
+      if (Capacitor.isNativePlatform()) {
+        const { App } = await import("@capacitor/app");
+        handler = await App.addListener("appStateChange", ({ isActive }) => {
+          if (isActive) {
+            syncContactsSilently();
+          }
+        });
       }
-    });
+    };
+    initApp();
 
     return () => {
-      handler.then((h) => h.remove());
+      if (handler) handler.remove();
     };
-  }, [syncContactsSilently]);
-  // ✅ MODIFIÉ : useEffect cu statusRef si aiResponseRef pentru a evita stale closures
+  }, [isMounted, syncContactsSilently]);
+
+  // 3. GESTION DE L'ÉCOUTE WEB UNIQUEMENT (Le natif utilise listenNative)
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    if (
+      isMounted &&
+      !Capacitor.isNativePlatform() &&
+      typeof window !== "undefined"
+    ) {
       const windowAny = window as any;
       const SpeechRecognition =
         windowAny.SpeechRecognition || windowAny.webkitSpeechRecognition;
@@ -207,7 +256,6 @@ export default function Home() {
         reco.continuous = true;
         reco.interimResults = true;
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         reco.onresult = async (event: any) => {
           let currentText = "";
           for (let i = 0; i < event.results.length; i++) {
@@ -221,7 +269,6 @@ export default function Home() {
 
           silenceTimerRef.current = setTimeout(() => {
             reco.stop();
-            // ✅ MODIFIÉ : on lit statusRef.current au lieu de status
             if (statusRef.current === "confirming") {
               handleConfirmation(currentText);
             } else {
@@ -230,7 +277,6 @@ export default function Home() {
           }, 1500);
         };
 
-        // ✅ MODIFIÉ : on lit statusRef.current au lieu de status
         reco.onend = () => {
           if (statusRef.current === "listening") setStatus("idle");
         };
@@ -239,7 +285,7 @@ export default function Home() {
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // ✅ MODIFIÉ : tableau vide, on initialise une seule fois
+  }, [isMounted]);
 
   const analyzeText = async (text: string) => {
     if (!text || text.trim() === "") {
@@ -259,7 +305,6 @@ export default function Home() {
       const data = await response.json();
 
       if (data.error) {
-        console.error("Erreur Vercel:", data.error);
         speak("Il y a un problème de connexion avec mon cerveau IA.");
         setStatus("idle");
         return;
@@ -269,22 +314,17 @@ export default function Home() {
 
       if (data.action === "LIRE_MESSAGE") {
         setStatus("executing");
-
         try {
           const smsReq = await fetch(`${API_BASE_URL}/api/receive-sms`);
-
           if (smsReq.ok) {
             const smsData = await smsReq.json();
             const savedName = Object.keys(contacts).find(
               (key) => contacts[key] === smsData.sender,
             );
             const senderName = savedName ? savedName : smsData.sender;
-
             speak(
               `Tu as un message de ${senderName} qui dit : ${smsData.message}`,
-              () => {
-                setStatus("idle");
-              },
+              () => setStatus("idle"),
             );
           } else {
             speak("Tu n'as aucun nouveau message.", () => setStatus("idle"));
@@ -303,18 +343,14 @@ export default function Home() {
         setStatus("executing");
         const nomPropre = data.contact.toLowerCase().trim();
         const numPropre = data.numero.replace(/[\s\-\.]/g, "");
-
         setContacts((prevContacts) => {
           const updatedContacts = { ...prevContacts, [nomPropre]: numPropre };
           localStorage.setItem("hub_contacts", JSON.stringify(updatedContacts));
           return updatedContacts;
         });
-
         speak(
           `C'est noté. Le numéro de ${data.contact} a bien été enregistré.`,
-          () => {
-            setStatus("idle");
-          },
+          () => setStatus("idle"),
         );
         return;
       } else if (data.action === "IMPORTER_CONTACT" && data.contact) {
@@ -323,13 +359,13 @@ export default function Home() {
 
         try {
           if (Capacitor.isNativePlatform()) {
+            const { Contacts } = await import("@capacitor-community/contacts");
             const permission = await Contacts.requestPermissions();
 
             if (permission.contacts === "granted") {
               const result = await Contacts.getContacts({
                 projection: { name: true, phones: true },
               });
-
               const contactTrouve = result.contacts.find(
                 (c) =>
                   c.name &&
@@ -348,13 +384,11 @@ export default function Home() {
                   /[\s\-\.]/g,
                   "",
                 );
-
                 setContacts((prev) => {
                   const updated = { ...prev, [nomRecherche]: numPropre };
                   localStorage.setItem("hub_contacts", JSON.stringify(updated));
                   return updated;
                 });
-
                 speak(
                   `C'est fait. J'ai trouvé ${data.contact} dans ton téléphone.`,
                   () => setStatus("idle"),
@@ -376,7 +410,6 @@ export default function Home() {
             );
           }
         } catch (error) {
-          console.error("Erreur d'importation :", error);
           speak("Il y a eu un problème lors de la recherche du contact.", () =>
             setStatus("idle"),
           );
@@ -416,8 +449,14 @@ export default function Home() {
         }
 
         speak(phrase, () => {
-          if (recognitionRef.current) recognitionRef.current.start();
-          setStatus("listening");
+          // Si on est sur l'APK, on lance la popup micro native pour entendre "Oui" ou "Non"
+          if (Capacitor.isNativePlatform()) {
+            listenNative(true);
+          } else {
+            // Sinon on utilise le micro web classique
+            if (recognitionRef.current) recognitionRef.current.start();
+            setStatus("listening");
+          }
         });
       } else {
         const actionRecue = data.action ? data.action : "aucune action";
@@ -436,7 +475,8 @@ export default function Home() {
     if (
       text.includes("oui") ||
       text.includes("d'accord") ||
-      text.includes("vas-y")
+      text.includes("vas-y") ||
+      text.includes("oui je veux bien")
     ) {
       executeAction();
     } else {
@@ -446,8 +486,7 @@ export default function Home() {
     }
   };
 
-  // ✅ MODIFIÉ : on lit aiResponseRef.current au lieu de aiResponse
-  const executeAction = () => {
+  const executeAction = async () => {
     const currentResponse = aiResponseRef.current;
 
     if (!currentResponse || !currentResponse.contact) {
@@ -474,42 +513,56 @@ export default function Home() {
         : "J'envoie le message.",
     );
 
-    setTimeout(() => {
+    setTimeout(async () => {
+      let url = "";
       if (currentResponse.action === "APPELER") {
-        window.location.href = `tel:${numero}`;
+        url = `tel:${numero}`;
       } else if (currentResponse.action === "WHATSAPP") {
         let formatWa = numero.replace(/[\s\-\.]/g, "");
-        if (formatWa.startsWith("0")) {
-          formatWa = "33" + formatWa.substring(1);
-        } else if (formatWa.startsWith("+")) {
-          formatWa = formatWa.substring(1);
-        }
+        if (formatWa.startsWith("0")) formatWa = "32" + formatWa.substring(1);
+        else if (formatWa.startsWith("+")) formatWa = formatWa.substring(1);
         const message = encodeURIComponent(currentResponse.contenu || "");
-        window.location.href = `https://wa.me/${formatWa}?text=${message}`;
+        url = `https://wa.me/${formatWa}?text=${message}`;
       } else {
         const message = encodeURIComponent(currentResponse.contenu || "");
-        window.location.href = `sms:${numero}?body=${message}`;
+        url = `sms:${numero}?body=${message}`;
       }
+
+      if (Capacitor.isNativePlatform()) {
+        try {
+          const { AppLauncher } = await import("@capacitor/app-launcher");
+          await AppLauncher.openUrl({ url });
+        } catch (e) {
+          alert("Erreur ouverture application");
+        }
+      } else {
+        window.location.href = url;
+      }
+
       setStatus("idle");
       setAiResponse(null);
     }, 1000);
   };
 
+  // 4. LE CLIC SUR LE GROS BOUTON MICRO
   const toggleListen = () => {
     if (status === "idle") {
       setStatus("listening");
 
-      speak("Comment puis-je vous aidez aujourd'hui ?", () => {
-        if (recognitionRef.current) {
-          try {
-            recognitionRef.current.start();
-          } catch (e) {
-            console.log("Micro déjà actif");
+      speak("Comment puis-je vous aider aujourd'hui ?", () => {
+        // Au clic, si c'est l'APK, on lance la popup native Android !
+        if (Capacitor.isNativePlatform()) {
+          listenNative(false);
+        } else {
+          if (recognitionRef.current) {
+            try {
+              recognitionRef.current.start();
+            } catch (e) {}
           }
         }
       });
     } else {
-      if (recognitionRef.current) {
+      if (!Capacitor.isNativePlatform() && recognitionRef.current) {
         recognitionRef.current.stop();
       }
       setStatus("idle");
@@ -536,6 +589,8 @@ export default function Home() {
     localStorage.setItem("hub_contacts", JSON.stringify(updatedContacts));
   };
 
+  if (!isMounted) return null;
+
   if (showSettings) {
     return (
       <main className="flex min-h-[100dvh] flex-col bg-slate-50 p-6">
@@ -559,7 +614,7 @@ export default function Home() {
             <Plus className="w-6 h-6" /> Importer le répertoire
           </button>
           <p className="text-xs text-slate-400 mt-2 text-center">
-            S&apos;adapte automatiquement (Application Native ou Site Web)
+            S&apos;adapte automatiquement
           </p>
         </div>
 
@@ -576,7 +631,7 @@ export default function Home() {
           />
           <input
             type="tel"
-            placeholder="Numéro (ex: 0612345678)"
+            placeholder="Numéro (ex: 0475123456)"
             value={newPhone}
             onChange={(e) => setNewPhone(e.target.value)}
             className="w-full p-3 mb-3 border rounded-lg bg-slate-50 focus:ring-2 focus:ring-blue-500 outline-none"
@@ -608,7 +663,6 @@ export default function Home() {
               </button>
             )}
           </div>
-
           <div className="space-y-2 overflow-y-auto max-h-[40vh]">
             {Object.entries(contacts).length === 0 ? (
               <p className="text-slate-400 text-sm text-center py-8 italic">
@@ -671,9 +725,7 @@ export default function Home() {
 
       <button
         onClick={toggleListen}
-        className={`w-64 h-64 rounded-full shadow-2xl transition-all duration-500 flex items-center justify-center
-          ${status === "listening" ? "bg-red-500 scale-110" : "bg-blue-600 active:scale-95"}
-        `}
+        className={`w-64 h-64 rounded-full shadow-2xl transition-all duration-500 flex items-center justify-center ${status === "listening" ? "bg-red-500 scale-110" : "bg-blue-600 active:scale-95"}`}
       >
         <Mic className="w-32 h-32 text-white" />
       </button>
