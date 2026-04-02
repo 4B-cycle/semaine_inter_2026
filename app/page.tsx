@@ -471,7 +471,7 @@ export default function Home() {
     if (status === "idle") {
       setStatus("listening");
 
-      speak("Comment puis-je vous aidez aujourd'hui ?", () => {
+      speak("Commen puis-je vous aidez aujourd'hui ?", () => {
         if (recognitionRef.current) {
           try {
             recognitionRef.current.start();
