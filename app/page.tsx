@@ -64,7 +64,7 @@ export default function Home() {
       : "";
 
   const speak = (text: string, callback?: () => void) => {
-    let textePropre = text
+    const textePropre = text
       .replace(/commente/gi, "comment")
       .replace(/comment /gi, "comman ");
 
@@ -160,13 +160,14 @@ export default function Home() {
       nativeListenerRef.current = await SpeechRecognition.addListener(
         "partialResults",
         (data: any) => {
-          if (data.matches && data.matches.length > 0) {
-            const text = data.matches[0].toLowerCase().trim();
-            if (isConfirming) handleConfirmationRef.current(text);
-            else analyzeTextRef.current(text);
-          } else {
-            setStatus("idle");
+          // Ignorer les résultats vides envoyés immédiatement au démarrage
+          if (!data.matches || data.matches.length === 0 || data.matches[0].trim() === "") {
+            return;
           }
+          const text = data.matches[0].toLowerCase().trim();
+          if (isConfirming) handleConfirmationRef.current(text);
+          else analyzeTextRef.current(text);
+
           if (nativeListenerRef.current) {
             nativeListenerRef.current.remove();
             nativeListenerRef.current = null;
@@ -177,14 +178,9 @@ export default function Home() {
       setStatus("listening");
       await SpeechRecognition.start({
         language: "fr-FR",
-        partialResults: true, // ← résultats en temps réel
-        popup: false, // ← écoute en arrière-plan, pas d'UI Google
-        maxAlternatives: 1,
+        partialResults: false, // ← false pour éviter les résultats vides instantanés
+        popup: false,
       });
-    } catch (e) {
-      setStatus("idle");
-    }
-  };
 
   const syncContactsSilently = useCallback(async () => {
     if (!isMounted) return;
