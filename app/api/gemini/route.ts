@@ -1,7 +1,7 @@
 import { GoogleGenAI } from "@google/genai";
 import { NextResponse } from "next/server";
 
-export const dynamic = "force-static"; // ← garder force-static pour le build export
+export const dynamic = "force-dynamic"; // ← garder force-dynamic pour le build export
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",

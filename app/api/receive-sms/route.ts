@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-export const dynamic = "force-static";
+export const dynamic = "force-dynamic"; // ← on veut du dynamique pour recevoir les SMS en temps réel
 
 // On met un message par défaut pour que l'URL ne soit JAMAIS en 404
 let latestSms = {

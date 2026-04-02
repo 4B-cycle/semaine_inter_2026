@@ -306,7 +306,7 @@ export default function ClientPage() {
 
     try {
       // ON FORCE L'URL SANS LE USE REF POUR LE TEST
-      const url = "https://semaine-inter-2026.vercel.app/api/gemini";
+      const url = `${API_BASE_URL}/api/gemini`;
 
       const response = await fetch(url, {
         method: "POST",
@@ -326,9 +326,7 @@ export default function ClientPage() {
       // --- LOGIQUE ACTIONS ---
       if (data.action === "LIRE_MESSAGE") {
         setStatus("executing");
-        const smsReq = await fetch(
-          "https://semaine-inter-2026.vercel.app/api/receive-sms",
-        );
+        const smsReq = await fetch(`${API_BASE_URL}/api/receive-sms`);
         if (smsReq.ok) {
           const smsData = await smsReq.json();
           const savedName = Object.keys(contacts).find(
