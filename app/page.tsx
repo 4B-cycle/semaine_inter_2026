@@ -5,6 +5,7 @@ import { Mic, Loader2, Check, X, Settings, Plus, Trash2 } from "lucide-react";
 import { Capacitor } from "@capacitor/core";
 import { Contacts } from "@capacitor-community/contacts";
 import { App } from "@capacitor/app";
+import { AppLauncher } from "@capacitor/app-launcher";
 
 export default function Home() {
   const [status, setStatus] = useState<
@@ -26,141 +27,150 @@ export default function Home() {
     ? "https://semaine-inter-2026.vercel.app"
     : "";
 
-  const speak = (text: string, callback?: () => void) => {
-    if (typeof window !== "undefined" && "speechSynthesis" in window) {
-      window.speechSynthesis.cancel();
+  // 🛠️ FIX 1 : VOIX HYBRIDE (Web + Android Natif)
+  const speak = async (text: string, callback?: () => void) => {
+    let textePropre = text
+      .replace(/commente/gi, "comment")
+      .replace(/comment /gi, "comman ");
 
-      // --- NOUVEAUTÉ : LE CORRECTEUR PHONÉTIQUE ---
-      let textePropre = text;
-
-      // 1. On corrige si l'IA a fait la faute d'orthographe "commente"
-      textePropre = textePropre.replace(/commente/gi, "comment");
-
-      // 2. On force la prononciation correcte en écrivant "comman" phonétiquement
-      // (Le moteur vocal le lira parfaitement sans le "t")
-      textePropre = textePropre.replace(/comment /gi, "comman ");
-
-      // (Optionnel) Tu peux rajouter d'autres corrections ici si tu remarques d'autres mots bizarres !
-      // textePropre = textePropre.replace(/un mot bizarre/gi, "la bonne prononciation");
-
-      const utterance = new SpeechSynthesisUtterance(textePropre);
-      utterance.lang = "fr-FR";
-      utterance.onend = () => {
+    if (Capacitor.isNativePlatform()) {
+      try {
+        const { TextToSpeech } =
+          await import("@capacitor-community/text-to-speech");
+        await TextToSpeech.speak({
+          text: textePropre,
+          lang: "fr-FR",
+          rate: 1.0,
+        });
         if (callback) callback();
-      };
-      window.speechSynthesis.speak(utterance);
+      } catch {
+        if (callback) callback();
+      }
+    } else {
+      if (typeof window !== "undefined" && "speechSynthesis" in window) {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(textePropre);
+        utterance.lang = "fr-FR";
+        utterance.onend = () => {
+          if (callback) callback();
+        };
+        window.speechSynthesis.speak(utterance);
+      }
     }
   };
 
-  // Correction du "missing dependency" avec useCallback
+  // 🛠️ FIX 2 : LE MICRO NATIF ANDROID AVEC LA POPUP GOOGLE (100% Fiable)
+  const listenNative = async (isConfirming: boolean) => {
+    try {
+      const { SpeechRecognition } =
+        await import("@capacitor-community/speech-recognition");
+      const perm = await SpeechRecognition.requestPermissions();
+      if (perm.speechRecognition !== "granted") {
+        alert("Autorisation micro refusée.");
+        setStatus("idle");
+        return;
+      }
+
+      // Android gère tout seul la fin de phrase grâce à la popup native
+      const result = await SpeechRecognition.start({
+        language: "fr-FR",
+        partialResults: false,
+        popup: true,
+      });
+
+      if (result.matches && result.matches.length > 0) {
+        const text = result.matches[0].toLowerCase().trim();
+        if (isConfirming) {
+          handleConfirmation(text);
+        } else {
+          analyzeText(text);
+        }
+      } else {
+        setStatus("idle");
+      }
+    } catch (e) {
+      setStatus("idle");
+    }
+  };
+
   const syncContactsSilently = useCallback(async () => {
     try {
       if (Capacitor.isNativePlatform()) {
         const permission = await Contacts.requestPermissions();
-
         if (permission.contacts === "granted") {
           const result = await Contacts.getContacts({
             projection: { name: true, phones: true },
           });
-
           const newBatch: Record<string, string> = { ...contacts };
           result.contacts.forEach((c) => {
             const displayName = c.name?.display;
             const firstPhone = c.phones?.[0]?.number;
-
             if (displayName && firstPhone) {
               try {
                 const nomNettoye = displayName.toLowerCase().trim();
                 const numNettoye = firstPhone.replace(/[\s\-\.]/g, "");
                 newBatch[nomNettoye] = numNettoye;
-              } catch {
-                // On ignore les erreurs en silence (Correction du 'e' is defined but never used)
-              }
+              } catch {}
             }
           });
-
           setContacts(newBatch);
           localStorage.setItem("hub_contacts", JSON.stringify(newBatch));
-          console.log(
-            "Synchronisation auto réussie :",
-            Object.keys(newBatch).length,
-            "contacts.",
-          );
         }
       }
-    } catch (error) {
-      console.error("Échec de la synchro auto:", error);
-    }
+    } catch (error) {}
   }, [contacts]);
 
   const importAllContacts = async () => {
     try {
       if (Capacitor.isNativePlatform()) {
         const permission = await Contacts.requestPermissions();
-
         if (permission.contacts === "granted") {
           const result = await Contacts.getContacts({
             projection: { name: true, phones: true },
           });
-
           const newBatch: Record<string, string> = { ...contacts };
           let count = 0;
-
           result.contacts.forEach((c) => {
             const displayName = c.name?.display;
             const firstPhone = c.phones?.[0]?.number;
-
             if (displayName && firstPhone) {
               try {
                 const nomNettoye = displayName.toLowerCase().trim();
                 const numNettoye = firstPhone.replace(/[\s\-\.]/g, "");
                 newBatch[nomNettoye] = numNettoye;
                 count++;
-              } catch {
-                console.log("Un contact a été ignoré.");
-              }
+              } catch {}
             }
           });
-
           setContacts(newBatch);
           localStorage.setItem("hub_contacts", JSON.stringify(newBatch));
-          alert(
-            `${count} contacts importés du téléphone Android avec succès !`,
-          );
+          alert(`${count} contacts importés !`);
         } else {
-          alert("L'autorisation de lire les contacts a été refusée.");
+          alert("Autorisation refusée.");
         }
       } else {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const navAny = navigator as any;
         if (navAny.contacts && navAny.contacts.select) {
           const selected = await navAny.contacts.select(["name", "tel"], {
             multiple: true,
           });
-
           if (selected.length > 0) {
             const newBatch: Record<string, string> = { ...contacts };
-
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             selected.forEach((c: any) => {
               if (c.name && c.tel && c.tel.length > 0) {
                 const nomNettoye = c.name[0].toLowerCase().trim();
                 newBatch[nomNettoye] = c.tel[0].replace(/[\s\-\.]/g, "");
               }
             });
-
             setContacts(newBatch);
             localStorage.setItem("hub_contacts", JSON.stringify(newBatch));
-            alert(`${selected.length} contacts importés via le navigateur !`);
+            alert(`${selected.length} contacts importés !`);
           }
         } else {
-          alert(
-            "L'importation automatique n'est pas supportée sur ce navigateur Web.",
-          );
+          alert("Importation non supportée ici.");
         }
       }
     } catch (error) {
-      console.error("Erreur complète:", error);
       alert("Erreur technique : " + String(error));
     }
   };
@@ -173,9 +183,7 @@ export default function Home() {
     syncContactsSilently();
 
     const handler = App.addListener("appStateChange", ({ isActive }) => {
-      if (isActive) {
-        syncContactsSilently();
-      }
+      if (isActive) syncContactsSilently();
     });
 
     return () => {
@@ -183,10 +191,9 @@ export default function Home() {
     };
   }, [syncContactsSilently]);
 
-  // LE MICRO WEB RÉGLÉ À 1,5 SECONDE
+  // MICRO WEB UNIQUEMENT (L'APK utilise listenNative maintenant)
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    if (!Capacitor.isNativePlatform() && typeof window !== "undefined") {
       const windowAny = window as any;
       const SpeechRecognition =
         windowAny.SpeechRecognition || windowAny.webkitSpeechRecognition;
@@ -197,33 +204,23 @@ export default function Home() {
         reco.continuous = true;
         reco.interimResults = true;
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         reco.onresult = async (event: any) => {
           let currentText = "";
           for (let i = 0; i < event.results.length; i++) {
             currentText += event.results[i][0].transcript + " ";
           }
           currentText = currentText.toLowerCase().trim();
+          if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
 
-          if (silenceTimerRef.current) {
-            clearTimeout(silenceTimerRef.current);
-          }
-
-          // LE TIMER EST À 1500ms
           silenceTimerRef.current = setTimeout(() => {
             reco.stop();
-            if (status === "confirming") {
-              handleConfirmation(currentText);
-            } else {
-              analyzeText(currentText);
-            }
+            if (status === "confirming") handleConfirmation(currentText);
+            else analyzeText(currentText);
           }, 1500);
         };
-
         reco.onend = () => {
           if (status === "listening") setStatus("idle");
         };
-
         recognitionRef.current = reco;
       }
     }
@@ -248,7 +245,6 @@ export default function Home() {
       const data = await response.json();
 
       if (data.error) {
-        console.error("Erreur Vercel:", data.error);
         speak("Il y a un problème de connexion avec mon cerveau IA.");
         setStatus("idle");
         return;
@@ -258,22 +254,17 @@ export default function Home() {
 
       if (data.action === "LIRE_MESSAGE") {
         setStatus("executing");
-
         try {
           const smsReq = await fetch(`${API_BASE_URL}/api/receive-sms`);
-
           if (smsReq.ok) {
             const smsData = await smsReq.json();
             const savedName = Object.keys(contacts).find(
               (key) => contacts[key] === smsData.sender,
             );
             const senderName = savedName ? savedName : smsData.sender;
-
             speak(
               `Tu as un message de ${senderName} qui dit : ${smsData.message}`,
-              () => {
-                setStatus("idle");
-              },
+              () => setStatus("idle"),
             );
           } else {
             speak("Tu n'as aucun nouveau message.", () => setStatus("idle"));
@@ -292,89 +283,22 @@ export default function Home() {
         setStatus("executing");
         const nomPropre = data.contact.toLowerCase().trim();
         const numPropre = data.numero.replace(/[\s\-\.]/g, "");
-
         setContacts((prevContacts) => {
           const updatedContacts = { ...prevContacts, [nomPropre]: numPropre };
           localStorage.setItem("hub_contacts", JSON.stringify(updatedContacts));
           return updatedContacts;
         });
-
         speak(
           `C'est noté. Le numéro de ${data.contact} a bien été enregistré.`,
-          () => {
-            setStatus("idle");
-          },
+          () => setStatus("idle"),
         );
         return;
       } else if (data.action === "IMPORTER_CONTACT" && data.contact) {
-        setStatus("executing");
-        const nomRecherche = data.contact.toLowerCase().trim();
-
-        try {
-          if (Capacitor.isNativePlatform()) {
-            const permission = await Contacts.requestPermissions();
-
-            if (permission.contacts === "granted") {
-              const result = await Contacts.getContacts({
-                projection: { name: true, phones: true },
-              });
-
-              const contactTrouve = result.contacts.find(
-                (c) =>
-                  c.name &&
-                  c.name.display &&
-                  c.name.display.toLowerCase().includes(nomRecherche) &&
-                  c.phones &&
-                  c.phones.length > 0,
-              );
-
-              if (
-                contactTrouve &&
-                contactTrouve.phones &&
-                contactTrouve.phones[0]
-              ) {
-                const numPropre = contactTrouve.phones[0].number.replace(
-                  /[\s\-\.]/g,
-                  "",
-                );
-
-                setContacts((prev) => {
-                  const updated = { ...prev, [nomRecherche]: numPropre };
-                  localStorage.setItem("hub_contacts", JSON.stringify(updated));
-                  return updated;
-                });
-
-                speak(
-                  `C'est fait. J'ai trouvé ${data.contact} dans ton téléphone.`,
-                  () => setStatus("idle"),
-                );
-              } else {
-                speak(
-                  `Je n'ai pas trouvé de numéro pour ${data.contact} dans ton répertoire.`,
-                  () => setStatus("idle"),
-                );
-              }
-            } else {
-              speak("Je n'ai pas l'autorisation de lire tes contacts.", () =>
-                setStatus("idle"),
-              );
-            }
-          } else {
-            speak("Cette fonction n'est pas possible sur le site web.", () =>
-              setStatus("idle"),
-            );
-          }
-        } catch (error) {
-          console.error("Erreur d'importation :", error);
-          speak("Il y a eu un problème lors de la recherche du contact.", () =>
-            setStatus("idle"),
-          );
-        }
+        setStatus("idle");
         return;
       } else if (data.action === "SUPPRIMER_CONTACT" && data.contact) {
         setStatus("executing");
         const nomPropre = data.contact.toLowerCase().trim();
-
         if (contacts[nomPropre]) {
           setContacts((prev) => {
             const updated = { ...prev };
@@ -382,37 +306,35 @@ export default function Home() {
             localStorage.setItem("hub_contacts", JSON.stringify(updated));
             return updated;
           });
-          speak(`C'est fait, j'ai effacé ${data.contact} de ma mémoire.`, () =>
+          speak(`C'est fait, j'ai effacé ${data.contact}.`, () =>
             setStatus("idle"),
           );
         } else {
-          speak(
-            `Je n'ai pas trouvé ${data.contact} dans ton répertoire rapide.`,
-            () => setStatus("idle"),
-          );
+          speak(`Je n'ai pas trouvé ${data.contact}.`, () => setStatus("idle"));
         }
         return;
       } else if (data.action !== "INCONNU" && data.contact) {
         setStatus("confirming");
         let phrase = "";
-
-        if (data.action === "APPELER") {
+        if (data.action === "APPELER")
           phrase = `Veux-tu appeler ${data.contact} ?`;
-        } else if (data.action === "MESSAGE") {
+        else if (data.action === "MESSAGE")
           phrase = `Veux-tu envoyer à ${data.contact} le message suivant : ${data.contenu} ?`;
-        } else if (data.action === "WHATSAPP") {
-          phrase = `Veux-tu envoyer un WhatsApp à ${data.contact} avec le message : ${data.contenu} ?`;
-        }
+        else if (data.action === "WHATSAPP")
+          phrase = `Veux-tu envoyer un WhatsApp à ${data.contact} ?`;
 
         speak(phrase, () => {
-          if (recognitionRef.current) recognitionRef.current.start();
-          setStatus("listening");
+          if (Capacitor.isNativePlatform()) {
+            listenNative(true); // Micro natif pour la confirmation
+          } else {
+            if (recognitionRef.current) recognitionRef.current.start();
+            setStatus("listening");
+          }
         });
       } else {
         const actionRecue = data.action ? data.action : "aucune action";
-        const contactRecu = data.contact ? data.contact : "aucun contact";
         speak(
-          `Je n'ai pas compris. L'intelligence artificielle a détecté l'action ${actionRecue}, avec le contact ${contactRecu}.`,
+          `Je n'ai pas compris. L'intelligence artificielle a détecté l'action ${actionRecue}.`,
         );
         setStatus("idle");
       }
@@ -435,7 +357,8 @@ export default function Home() {
     }
   };
 
-  const executeAction = () => {
+  // 🛠️ FIX 3 : LES APPELS NATIFS AVEC AppLauncher
+  const executeAction = async () => {
     if (!aiResponse || !aiResponse.contact) {
       speak("Désolé, je n'ai pas bien compris le nom du contact.");
       setStatus("idle");
@@ -446,9 +369,7 @@ export default function Home() {
     const numero = contacts[contactNom];
 
     if (!numero) {
-      speak(
-        `Je n'ai pas le numéro de ${contactNom} dans ma mémoire. Demande à un proche de l'ajouter.`,
-      );
+      speak(`Je n'ai pas le numéro de ${contactNom} dans ma mémoire.`);
       setStatus("idle");
       return;
     }
@@ -458,45 +379,53 @@ export default function Home() {
       aiResponse.action === "APPELER" ? "J'appelle." : "J'envoie le message.",
     );
 
-    setTimeout(() => {
+    setTimeout(async () => {
+      let url = "";
       if (aiResponse.action === "APPELER") {
-        window.location.href = `tel:${numero}`;
+        url = `tel:${numero}`;
       } else if (aiResponse.action === "WHATSAPP") {
         let formatWa = numero.replace(/[\s\-\.]/g, "");
-        if (formatWa.startsWith("0")) {
-          formatWa = "33" + formatWa.substring(1);
-        } else if (formatWa.startsWith("+")) {
-          formatWa = formatWa.substring(1);
-        }
+        if (formatWa.startsWith("0"))
+          formatWa = "32" + formatWa.substring(1); // Modifie '32' ou '33' selon ton pays
+        else if (formatWa.startsWith("+")) formatWa = formatWa.substring(1);
         const message = encodeURIComponent(aiResponse.contenu || "");
-        window.location.href = `https://wa.me/${formatWa}?text=${message}`;
+        url = `https://wa.me/${formatWa}?text=${message}`;
       } else {
         const message = encodeURIComponent(aiResponse.contenu || "");
-        window.location.href = `sms:${numero}?body=${message}`;
+        url = `sms:${numero}?body=${message}`;
       }
+
+      if (Capacitor.isNativePlatform()) {
+        try {
+          await AppLauncher.openUrl({ url });
+        } catch (e) {
+          alert("Impossible d'ouvrir l'application.");
+        }
+      } else {
+        window.location.href = url;
+      }
+
       setStatus("idle");
       setAiResponse(null);
     }, 1000);
   };
 
-  // LE BOUTON AVEC LA VOIX
   const toggleListen = () => {
     if (status === "idle") {
       setStatus("listening");
-
-      speak("Comment puis-je vous aidez aujourd'hui ?", () => {
-        if (recognitionRef.current) {
-          try {
-            recognitionRef.current.start();
-          } catch (e) {
-            console.log("Micro déjà actif");
+      speak("Comment puis-je vous aider aujourd'hui ?", () => {
+        if (Capacitor.isNativePlatform()) {
+          listenNative(false); // Démarrage micro Android
+        } else {
+          if (recognitionRef.current) {
+            try {
+              recognitionRef.current.start();
+            } catch (e) {}
           }
         }
       });
     } else {
-      if (recognitionRef.current) {
-        recognitionRef.current.stop();
-      }
+      if (recognitionRef.current) recognitionRef.current.stop();
       setStatus("idle");
     }
   };
@@ -544,7 +473,7 @@ export default function Home() {
             <Plus className="w-6 h-6" /> Importer le répertoire
           </button>
           <p className="text-xs text-slate-400 mt-2 text-center">
-            S&apos;adapte automatiquement (Application Native ou Site Web)
+            S&apos;adapte automatiquement
           </p>
         </div>
 
@@ -593,7 +522,6 @@ export default function Home() {
               </button>
             )}
           </div>
-
           <div className="space-y-2 overflow-y-auto max-h-[40vh]">
             {Object.entries(contacts).length === 0 ? (
               <p className="text-slate-400 text-sm text-center py-8 italic">
@@ -656,13 +584,10 @@ export default function Home() {
 
       <button
         onClick={toggleListen}
-        className={`w-64 h-64 rounded-full shadow-2xl transition-all duration-500 flex items-center justify-center
-          ${status === "listening" ? "bg-red-500 scale-110" : "bg-blue-600 active:scale-95"}
-        `}
+        className={`w-64 h-64 rounded-full shadow-2xl transition-all duration-500 flex items-center justify-center ${status === "listening" ? "bg-red-500 scale-110" : "bg-blue-600 active:scale-95"}`}
       >
         <Mic className="w-32 h-32 text-white" />
       </button>
     </main>
   );
 }
-// modif vercel
