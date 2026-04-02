@@ -1,10 +1,12 @@
-import type { CapacitorConfig } from "@capacitor/cli";
+import { CapacitorConfig } from "@capacitor/cli";
 
 const config: CapacitorConfig = {
   appId: "com.bastos.appVocal",
   appName: "app-vocal",
-  webDir: "out",
+  webDir: "public",
   server: {
+    url: "https://semaine-inter-2026.vercel.app",
+    cleartext: false,
     androidScheme: "https",
   },
 };

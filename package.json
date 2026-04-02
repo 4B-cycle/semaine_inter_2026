@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "build:capacitor": "cross-env CAPACITOR_BUILD=true next build",
+    "build:capacitor": "npx cap sync android",
+    "postinstall": "node scripts/fix-proguard.js",
     "start": "next start",
     "lint": "eslint"
   },

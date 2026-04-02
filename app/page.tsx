@@ -38,6 +38,10 @@ export default function Home() {
 
   const [showSettings, setShowSettings] = useState(false);
   const [contacts, setContacts] = useState<Record<string, string>>({});
+  const contactsRef = useRef(contacts); // ← ajouter cette ligne
+  useEffect(() => {
+    contactsRef.current = contacts;
+  }, [contacts]); // ← et celle-ci
   const [newName, setNewName] = useState("");
   const [newPhone, setNewPhone] = useState("");
 
@@ -191,7 +195,7 @@ export default function Home() {
           const result = await Contacts.getContacts({
             projection: { name: true, phones: true },
           });
-          const newBatch: Record<string, string> = { ...contacts };
+          const newBatch: Record<string, string> = { ...contactsRef.current };
           result.contacts.forEach((c) => {
             const displayName = c.name?.display;
             const firstPhone = c.phones?.[0]?.number;
@@ -208,7 +212,7 @@ export default function Home() {
         }
       }
     } catch (error) {}
-  }, [contacts, isMounted]);
+  }, [isMounted]);
 
   const importAllContacts = async () => {
     try {

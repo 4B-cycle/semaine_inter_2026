@@ -3,8 +3,6 @@ import type { NextConfig } from "next";
 const isVercel = !!process.env.VERCEL;
 
 const nextConfig: NextConfig = {
-  ...(process.env.CAPACITOR_BUILD === "true" ? { output: "export" } : {}),
-
   // Headers CORS uniquement sur Vercel (inutiles pour l'export statique)
   ...(isVercel && {
     async headers() {
