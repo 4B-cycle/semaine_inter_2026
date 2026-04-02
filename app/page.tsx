@@ -155,9 +155,10 @@ export default function Home() {
         return;
       }
 
-      setStatus("listening");
+      if (!isConfirming) {
+        setStatus("listening");
+      }
 
-      // Avec partialResults: false, le résultat est dans le retour de start()
       const result = await SpeechRecognition.start({
         language: "fr-FR",
         partialResults: false,
@@ -173,7 +174,7 @@ export default function Home() {
         if (isConfirming) handleConfirmationRef.current(text);
         else analyzeTextRef.current(text);
       } else {
-        setStatus("idle");
+        if (!isConfirming) setStatus("idle");
       }
     } catch {
       // Si le micro rate pendant la confirmation, on réessaie une fois
