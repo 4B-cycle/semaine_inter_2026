@@ -704,46 +704,32 @@ export default function Home() {
       </button>
 
       <div className="mb-12 h-48 flex flex-col items-center justify-center text-center">
-        {status === "idle" && (
-          <p className="text-slate-400 font-medium italic">
-            Appuyez pour commencer
-          </p>
-        )}
+        {/* On ne met plus de texte du tout, juste les animations */}
 
         {status === "listening" && (
-          <div className="flex flex-col items-center gap-4">
-            <div className="w-8 h-8 bg-red-500 rounded-full animate-pulse" />
-            <p className="text-red-500 font-bold animate-pulse">
-              Je vous écoute...
-            </p>
-          </div>
+          <div className="w-8 h-8 bg-red-500 rounded-full animate-pulse" />
         )}
 
         {status === "thinking" && (
           <Loader2 className="w-24 h-24 text-blue-600 animate-spin" />
         )}
 
-        {/* ✅ BOUTONS DE CONFIRMATION TACTILES */}
+        {/* ✅ BOUTONS DE CONFIRMATION TACTILES (100% Icônes) */}
         {status === "confirming" && (
-          <div className="flex flex-col items-center gap-6 scale-110">
-            <p className="text-lg font-bold text-slate-700 mb-2">On y va ?</p>
-            <div className="flex gap-10">
-              <button
-                onClick={() => handleConfirmation("oui")}
-                className="flex flex-col items-center justify-center p-4 bg-green-100 border-2 border-green-500 rounded-3xl shadow-lg active:scale-90 transition-transform"
-              >
-                <Check className="w-16 h-16 text-green-600" />
-                <span className="text-green-700 font-black mt-1">OUI</span>
-              </button>
+          <div className="flex gap-10 scale-110">
+            <button
+              onClick={() => handleConfirmation("oui")}
+              className="flex items-center justify-center p-6 bg-green-100 border-4 border-green-500 rounded-full shadow-lg active:scale-90 transition-transform"
+            >
+              <Check className="w-16 h-16 text-green-600" />
+            </button>
 
-              <button
-                onClick={() => handleConfirmation("non")}
-                className="flex flex-col items-center justify-center p-4 bg-red-100 border-2 border-red-500 rounded-3xl shadow-lg active:scale-90 transition-transform"
-              >
-                <X className="w-16 h-16 text-red-600" />
-                <span className="text-red-700 font-black mt-1">NON</span>
-              </button>
-            </div>
+            <button
+              onClick={() => handleConfirmation("non")}
+              className="flex items-center justify-center p-6 bg-red-100 border-4 border-red-500 rounded-full shadow-lg active:scale-90 transition-transform"
+            >
+              <X className="w-16 h-16 text-red-600" />
+            </button>
           </div>
         )}
 
@@ -752,7 +738,7 @@ export default function Home() {
         )}
       </div>
 
-      {/* Le bouton principal disparait ou devient inactif pendant la confirmation pour ne pas gêner */}
+      {/* ✅ LE MICRO RESTE ROUGE PENDANT LA CONFIRMATION */}
       <button
         onClick={toggleListen}
         disabled={
@@ -761,8 +747,12 @@ export default function Home() {
           status === "executing"
         }
         className={`w-64 h-64 rounded-full shadow-2xl transition-all duration-500 flex items-center justify-center 
-          ${status === "listening" ? "bg-red-500 scale-110" : "bg-blue-600 active:scale-95"}
-          ${status === "confirming" || status === "thinking" ? "opacity-20 grayscale" : ""}
+          ${
+            status === "listening" || status === "confirming"
+              ? "bg-red-500 scale-110 shadow-red-500/50"
+              : "bg-blue-600 active:scale-95"
+          }
+          ${status === "thinking" || status === "executing" ? "opacity-20 grayscale" : ""}
         `}
       >
         <Mic className="w-32 h-32 text-white" />
