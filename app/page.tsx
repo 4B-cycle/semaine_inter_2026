@@ -4,6 +4,8 @@ import { useState, useEffect, useRef } from "react";
 import { Mic, Loader2, Check, X, Settings, Plus, Trash2 } from "lucide-react";
 import { Capacitor } from "@capacitor/core";
 import { Contacts } from "@capacitor-community/contacts";
+import { App } from "@capacitor/app";
+import { SpeechRecognition } from "@capacitor-community/speech-recognition";
 
 export default function Home() {
   const [status, setStatus] = useState<
@@ -40,11 +42,13 @@ export default function Home() {
             const firstPhone = c.phones?.[0]?.number;
 
             if (displayName && firstPhone) {
-              // Nettoyage : "Papa " -> "papa"
-              const nomNettoye = displayName.toLowerCase().trim();
-              // Nettoyage numéro : "06 12..." -> "0612..."
-              const numNettoye = firstPhone.replace(/[\s\-\.]/g, "");
-              newBatch[nomNettoye] = numNettoye;
+              try {
+                const nomNettoye = displayName.toLowerCase().trim();
+                const numNettoye = firstPhone.replace(/[\s\-\.]/g, "");
+                newBatch[nomNettoye] = numNettoye;
+              } catch (e) {
+                // On ignore les erreurs en silence
+              }
             }
           });
 
@@ -78,13 +82,22 @@ export default function Home() {
           let count = 0;
 
           result.contacts.forEach((c) => {
-            if (c.name && c.phones && c.phones.length > 0) {
-              const nomNettoye = c.name.display.toLowerCase().trim();
-              newBatch[nomNettoye] = c.phones[0].number.replace(
-                /[\s\-\.]/g,
-                "",
-              );
-              count++;
+            // SÉCURITÉ : On extrait avec des "?" pour éviter les crashs si une donnée manque
+            const displayName = c.name?.display;
+            const firstPhone = c.phones?.[0]?.number;
+
+            // On ne l'ajoute que si le contact a un VRAI nom ET un VRAI numéro
+            if (displayName && firstPhone) {
+              try {
+                const nomNettoye = displayName.toLowerCase().trim();
+                const numNettoye = firstPhone.replace(/[\s\-\.]/g, "");
+                newBatch[nomNettoye] = numNettoye;
+                count++;
+              } catch (e) {
+                console.log(
+                  "Un contact a été ignoré car son format est invalide.",
+                );
+              }
             }
           });
 
@@ -126,34 +139,35 @@ export default function Home() {
         }
       }
     } catch (error) {
-      console.error("Erreur lors de l'importation:", error);
-      alert("Erreur lors de l'importation.");
+      console.error("Erreur complète:", error);
+      // On affiche l'erreur technique pour comprendre ce qui bloque !
+      alert(
+        "Erreur technique : " + JSON.stringify(error) + " | " + String(error),
+      );
     }
   };
 
   useEffect(() => {
-    // 1. On charge d'abord ce qu'on a déjà en mémoire locale (très rapide)
+    // 1. Chargement initial
     const savedContacts = localStorage.getItem("hub_contacts");
     if (savedContacts) {
       setContacts(JSON.parse(savedContacts));
     }
-
-    // 2. On lance la synchronisation silencieuse avec le répertoire Android
-    // Cela mettra à jour les numéros si l'aidant a changé quelque chose dans le téléphone
     syncContactsSilently();
-  }, []);
 
-  const speak = (text: string, callback?: () => void) => {
-    if (typeof window !== "undefined" && "speechSynthesis" in window) {
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = "fr-FR";
-      utterance.onend = () => {
-        if (callback) callback();
-      };
-      window.speechSynthesis.speak(utterance);
-    }
-  };
+    // 2. Écouteur de changement d'état (Le "Sync on Resume")
+    const handler = App.addListener("appStateChange", ({ isActive }) => {
+      if (isActive) {
+        console.log("App de retour au premier plan : synchronisation...");
+        syncContactsSilently();
+      }
+    });
+
+    // Nettoyage de l'écouteur quand on ferme l'app
+    return () => {
+      handler.then((h) => h.remove());
+    };
+  }, []);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -169,6 +183,18 @@ export default function Home() {
         // --- NOUVEAUTÉ 1 : On laisse le micro écouter en continu ---
         reco.continuous = true;
         reco.interimResults = true;
+
+        // --- DÉTECTEUR D'ERREUR MICRO (Pour déboguer l'APK) ---
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        reco.onerror = (event: any) => {
+          console.error("Erreur micro:", event.error);
+          alert("Erreur Micro Android : " + event.error);
+          setStatus("idle");
+        };
+
+        reco.onstart = () => {
+          console.log("Le micro Android est bien ouvert.");
+        };
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         reco.onresult = async (event: any) => {
@@ -472,12 +498,56 @@ export default function Home() {
     }, 1000);
   };
 
-  const toggleListen = () => {
+  const toggleListen = async () => {
     if (status === "idle") {
       setStatus("listening");
-      recognitionRef.current.start();
+
+      // On fait parler l'application EN PREMIER
+      speak("Je t'écoute.", async () => {
+        // Une fois qu'elle a fini de parler, on allume le micro
+        if (Capacitor.isNativePlatform()) {
+          // --- STRATÉGIE APK ---
+          try {
+            const perm = await SpeechRecognition.requestPermissions();
+            if (perm.speechRecognition === "granted") {
+              const result = await SpeechRecognition.start({
+                language: "fr-FR",
+                popup: false,
+                partialResults: false,
+              });
+
+              if (result.matches && result.matches.length > 0) {
+                const text = result.matches[0].toLowerCase();
+                setStatus("idle");
+
+                if (status === "confirming") {
+                  handleConfirmation(text);
+                } else {
+                  analyzeText(text);
+                }
+              }
+            } else {
+              speak("Désolé, je n'ai pas accès à ton micro.");
+              setStatus("idle");
+            }
+          } catch (error) {
+            console.error("Erreur micro natif:", error);
+            setStatus("idle");
+          }
+        } else {
+          // --- STRATÉGIE WEB ---
+          if (recognitionRef.current) {
+            recognitionRef.current.start();
+          }
+        }
+      });
     } else {
-      recognitionRef.current.stop();
+      // Si on appuie pour arrêter manuellement
+      if (Capacitor.isNativePlatform()) {
+        SpeechRecognition.stop();
+      } else {
+        if (recognitionRef.current) recognitionRef.current.stop();
+      }
       setStatus("idle");
     }
   };
@@ -617,25 +687,30 @@ export default function Home() {
       </button>
 
       <div className="mb-12 h-40 flex flex-col items-center justify-center text-center">
-        {status === "idle" && <p className="text-2xl text-gray-400">Prêt</p>}
+        {/* En attente : on ne met rien (ni texte ni icône) */}
+        {status === "idle" && null}
+
+        {/* Écoute : on affiche juste un petit point rouge qui clignote au lieu du texte */}
         {status === "listening" && (
-          <p className="text-3xl font-bold text-red-500 animate-pulse">
-            Je t&apos;écoute...
-          </p>
+          <div className="w-8 h-8 bg-red-500 rounded-full animate-pulse" />
         )}
+
+        {/* Réflexion : on garde la roue bleue */}
         {status === "thinking" && (
-          <Loader2 className="w-16 h-16 text-blue-600 animate-spin" />
+          <Loader2 className="w-24 h-24 text-blue-600 animate-spin" />
         )}
+
+        {/* Confirmation : on garde les grosses icônes Vertes et Rouges */}
         {status === "confirming" && (
-          <div className="flex flex-col items-center gap-4">
-            <div className="flex gap-8">
-              <Check className="w-16 h-16 text-green-500" />
-              <X className="w-16 h-16 text-red-500" />
-            </div>
+          <div className="flex gap-12">
+            <Check className="w-24 h-24 text-green-500 bg-green-100 rounded-full p-2" />
+            <X className="w-24 h-24 text-red-500 bg-red-100 rounded-full p-2" />
           </div>
         )}
+
+        {/* Action en cours : on peut mettre un téléphone vert qui clignote */}
         {status === "executing" && (
-          <p className="text-3xl font-bold text-green-600">J&apos;appelle...</p>
+          <div className="w-8 h-8 bg-green-500 rounded-full animate-pulse" />
         )}
       </div>
 

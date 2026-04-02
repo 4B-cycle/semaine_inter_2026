@@ -10,7 +10,9 @@
   },
   "dependencies": {
     "@capacitor-community/contacts": "^7.1.0",
+    "@capacitor-community/speech-recognition": "^7.0.1",
     "@capacitor/android": "^8.3.0",
+    "@capacitor/app": "^8.1.0",
     "@capacitor/cli": "^8.3.0",
     "@capacitor/core": "^8.3.0",
     "@google/genai": "^1.47.0",

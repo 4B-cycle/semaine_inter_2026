@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+export const dynamic = "force-static";
 
 // On met un message par défaut pour que l'URL ne soit JAMAIS en 404
 let latestSms = {
