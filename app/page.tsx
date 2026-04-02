@@ -155,41 +155,30 @@ export default function Home() {
         return;
       }
 
-      if (nativeListenerRef.current) nativeListenerRef.current.remove();
-
-      nativeListenerRef.current = await SpeechRecognition.addListener(
-        "partialResults",
-        (data: any) => {
-          // Ignorer les résultats vides envoyés immédiatement au démarrage
-          if (
-            !data.matches ||
-            data.matches.length === 0 ||
-            data.matches[0].trim() === ""
-          ) {
-            return;
-          }
-          const text = data.matches[0].toLowerCase().trim();
-          if (isConfirming) handleConfirmationRef.current(text);
-          else analyzeTextRef.current(text);
-
-          if (nativeListenerRef.current) {
-            nativeListenerRef.current.remove();
-            nativeListenerRef.current = null;
-          }
-        },
-      );
-
       setStatus("listening");
-      await SpeechRecognition.start({
+
+      // Avec partialResults: false, le résultat est dans le retour de start()
+      const result = await SpeechRecognition.start({
         language: "fr-FR",
-        partialResults: false, // ← false pour éviter les résultats vides instantanés
+        partialResults: false,
         popup: false,
       });
+
+      if (
+        result?.matches &&
+        result.matches.length > 0 &&
+        result.matches[0].trim() !== ""
+      ) {
+        const text = result.matches[0].toLowerCase().trim();
+        if (isConfirming) handleConfirmationRef.current(text);
+        else analyzeTextRef.current(text);
+      } else {
+        setStatus("idle");
+      }
     } catch {
-      // ferme le try
       setStatus("idle");
     }
-  }; // ← ferme listenNative — cette ligne disparaissait à chaque édition
+  };
 
   const syncContactsSilently = useCallback(async () => {
     if (!isMounted) return;
