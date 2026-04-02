@@ -176,7 +176,12 @@ export default function Home() {
         setStatus("idle");
       }
     } catch {
-      setStatus("idle");
+      // Si le micro rate pendant la confirmation, on réessaie une fois
+      if (isConfirming && statusRef.current === "confirming") {
+        setTimeout(() => listenNative(true), 1500);
+      } else {
+        setStatus("idle");
+      }
     }
   };
 
@@ -446,7 +451,7 @@ export default function Home() {
 
         speak(phrase, () => {
           if (Capacitor.isNativePlatform()) {
-            listenNative(true);
+            setTimeout(() => listenNative(true), 1500); // ← délai pour laisser le TTS finir
           } else {
             startWebMic(true);
           }
@@ -513,7 +518,7 @@ export default function Home() {
       } else if (currentResponse.action === "WHATSAPP") {
         let formatWa = numero.replace(/[\s\-\.]/g, "");
         if (formatWa.startsWith("0"))
-          formatWa = "33" + formatWa.substring(1); // Mettre 32 pour la Belgique
+          formatWa = "32" + formatWa.substring(1); // Mettre 32 pour la Belgique
         else if (formatWa.startsWith("+")) formatWa = formatWa.substring(1);
         const message = encodeURIComponent(currentResponse.contenu || "");
         url = `https://wa.me/${formatWa}?text=${message}`;
