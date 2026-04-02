@@ -3,7 +3,7 @@ import { MetadataRoute } from "next";
 export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "Hub Vocal Accessibilité",
-    short_name: "HubVocal",
+    short_name: "Voicy",
     description: "Assistant vocal pour personnes analphabètes",
     start_url: "/",
     display: "standalone",

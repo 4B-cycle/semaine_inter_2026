@@ -2,8 +2,8 @@ import { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "Hub Vocal Accessibilité",
-    short_name: "HubVocal",
+    name: "Voicy",
+    short_name: "Voicy",
     description: "Assistant vocal pour personnes analphabètes",
     start_url: "/",
     display: "standalone",
@@ -11,9 +11,10 @@ export default function manifest(): MetadataRoute.Manifest {
     theme_color: "#2563eb",
     icons: [
       {
-        src: "/icon-192x192.png",
+        src: "/icon.png",
         sizes: "192x192",
         type: "image/png",
+        purpose: "any",
       },
     ],
   };

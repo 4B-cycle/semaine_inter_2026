@@ -1,6 +1,6 @@
 {
-  "name": "Hub Vocal",
-  "short_name": "HubVocal",
+  "name": "Voicy",
+  "short_name": "Voicy",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",
