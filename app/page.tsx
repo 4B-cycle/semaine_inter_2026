@@ -175,12 +175,16 @@ export default function Home() {
       );
 
       setStatus("listening");
-await SpeechRecognition.start({
-  language: "fr-FR",
-  partialResults: true,   // ← résultats en temps réel
-  popup: false,           // ← écoute en arrière-plan, pas d'UI Google
-  maxAlternatives: 1,
-});
+      await SpeechRecognition.start({
+        language: "fr-FR",
+        partialResults: true, // ← résultats en temps réel
+        popup: false, // ← écoute en arrière-plan, pas d'UI Google
+        maxAlternatives: 1,
+      });
+    } catch (e) {
+      setStatus("idle");
+    }
+  };
 
   const syncContactsSilently = useCallback(async () => {
     if (!isMounted) return;
