@@ -171,11 +171,17 @@ export default function Home() {
   };
 
   useEffect(() => {
+    // ✅ Guard SSR : on vérifie qu'on est bien côté client
+    if (typeof window === "undefined") return;
+
     const savedContacts = localStorage.getItem("hub_contacts");
     if (savedContacts) {
       setContacts(JSON.parse(savedContacts));
     }
     syncContactsSilently();
+
+    // ✅ Guard Capacitor : on n'appelle App.addListener que sur natif
+    if (!Capacitor.isNativePlatform()) return;
 
     const handler = App.addListener("appStateChange", ({ isActive }) => {
       if (isActive) {
@@ -187,7 +193,6 @@ export default function Home() {
       handler.then((h) => h.remove());
     };
   }, [syncContactsSilently]);
-
   // ✅ MODIFIÉ : useEffect cu statusRef si aiResponseRef pentru a evita stale closures
   useEffect(() => {
     if (typeof window !== "undefined") {
