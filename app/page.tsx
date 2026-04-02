@@ -161,7 +161,11 @@ export default function Home() {
         "partialResults",
         (data: any) => {
           // Ignorer les résultats vides envoyés immédiatement au démarrage
-          if (!data.matches || data.matches.length === 0 || data.matches[0].trim() === "") {
+          if (
+            !data.matches ||
+            data.matches.length === 0 ||
+            data.matches[0].trim() === ""
+          ) {
             return;
           }
           const text = data.matches[0].toLowerCase().trim();
@@ -181,6 +185,11 @@ export default function Home() {
         partialResults: false, // ← false pour éviter les résultats vides instantanés
         popup: false,
       });
+    } catch {
+      // ferme le try
+      setStatus("idle");
+    }
+  }; // ← ferme listenNative — cette ligne disparaissait à chaque édition
 
   const syncContactsSilently = useCallback(async () => {
     if (!isMounted) return;
