@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "build:capacitor": "npx cap sync android",
-    "postinstall": "node scripts/fix-proguard.js",
+    "postinstall": "node -e \"if(!process.env.VERCEL) require('child_process').execSync('node scripts/fix-proguard.js', {stdio:'inherit'})\"",
     "start": "next start",
     "lint": "eslint"
   },
