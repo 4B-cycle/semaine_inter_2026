@@ -178,7 +178,7 @@ export default function Home() {
     } catch {
       // Si le micro rate pendant la confirmation, on réessaie une fois
       if (isConfirming && statusRef.current === "confirming") {
-        setTimeout(() => listenNative(true), 1500);
+        setTimeout(() => listenNative(true), 2500);
       } else {
         setStatus("idle");
       }
@@ -451,7 +451,9 @@ export default function Home() {
 
         speak(phrase, () => {
           if (Capacitor.isNativePlatform()) {
-            setTimeout(() => listenNative(true), 1500); // ← délai pour laisser le TTS finir
+            const motsCount = phrase.split(" ").length;
+            const delai = Math.max(1000, motsCount * 60 + 500);
+            setTimeout(() => listenNative(true), delai);
           } else {
             startWebMic(true);
           }
