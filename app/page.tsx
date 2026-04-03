@@ -521,31 +521,44 @@ export default function Home() {
   const handleConfirmation = (text: string) => {
     const current = aiResponseRef.current;
 
-    // ✅ Mode navigation entre plusieurs contacts
     if (current?.choixContacts) {
       if (
         text.includes("oui") ||
         text.includes("d'accord") ||
         text.includes("vas-y")
       ) {
-        // Confirme le contact actuellement proposé
-        setAiResponse({
+        // ✅ FIX 1 : on passe les données directement, sans attendre le re-render React
+        const dataToExecute = {
           ...current,
           contact: current.choixContacts[current.choixIndex],
           choixContacts: undefined,
-        });
-        executeAction();
+        };
+        setAiResponse(dataToExecute);
+        executeAction(dataToExecute);
       } else {
-        // Passe au contact suivant
         const nextIndex = current.choixIndex + 1;
         if (nextIndex < current.choixContacts.length) {
-          setAiResponse({ ...current, choixIndex: nextIndex });
-          speak(`Veux-tu appeler ${current.choixContacts[nextIndex]} ?`, () => {
+          // ✅ FIX 2 : on met aussi à jour "contact" dans le state
+          // sinon le ref pointe encore sur le vieux contact quand l'user dit "oui"
+          setAiResponse({
+            ...current,
+            contact: current.choixContacts[nextIndex],
+            choixIndex: nextIndex,
+          });
+
+          let phrase = "";
+          if (current.action === "APPELER")
+            phrase = `Veux-tu appeler ${current.choixContacts[nextIndex]} ?`;
+          else if (current.action === "MESSAGE")
+            phrase = `Veux-tu envoyer un message à ${current.choixContacts[nextIndex]} ?`;
+          else if (current.action === "WHATSAPP")
+            phrase = `Veux-tu envoyer un WhatsApp à ${current.choixContacts[nextIndex]} ?`;
+
+          speak(phrase, () => {
             if (Capacitor.isNativePlatform()) listenNative(true);
             else startWebMic(true);
           });
         } else {
-          // Plus personne à proposer
           speak("Je n'ai trouvé personne d'autre. J'annule.");
           setStatus("idle");
           setAiResponse(null);
@@ -554,7 +567,7 @@ export default function Home() {
       return;
     }
 
-    // Confirmation normale (inchangée)
+    // Confirmation normale
     if (
       text.includes("oui") ||
       text.includes("d'accord") ||
@@ -568,8 +581,8 @@ export default function Home() {
     }
   };
 
-  const executeAction = async () => {
-    const currentResponse = aiResponseRef.current;
+  const executeAction = async (overrideResponse?: any) => {
+    const currentResponse = overrideResponse ?? aiResponseRef.current;
 
     if (!currentResponse || !currentResponse.contact) {
       speak("Désolé, je n'ai pas bien compris le nom du contact.");
