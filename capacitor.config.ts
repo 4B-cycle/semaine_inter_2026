@@ -2,7 +2,7 @@ import { CapacitorConfig } from "@capacitor/cli";
 
 const config: CapacitorConfig = {
   appId: "com.bastos.appVocal",
-  appName: "app-vocal",
+  appName: "Voicy",
   webDir: "out", // ✅ CORRIGÉ : Next.js exporte toujours dans "out"
   bundledWebRuntime: false,
   plugins: {

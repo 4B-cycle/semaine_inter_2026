@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">app-vocal</string>
-    <string name="title_activity_main">app-vocal</string>
+    <string name="app_name">Voicy</string>
+    <string name="title_activity_main">Voicy</string>
     <string name="package_name">com.bastos.appVocal</string>
     <string name="custom_url_scheme">com.bastos.appVocal</string>
 </resources>

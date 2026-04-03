@@ -72,10 +72,13 @@ export default function Home() {
       import("@capacitor-community/text-to-speech").then(({ TextToSpeech }) => {
         TextToSpeech.speak({ text: textePropre, lang: "fr-FR", rate: 1.0 })
           .then(() => {
-            if (callback) callback();
+            if (callback) {
+              // ✅ Délai pour laisser Android libérer le canal audio
+              setTimeout(callback, 600);
+            }
           })
           .catch(() => {
-            if (callback) callback();
+            if (callback) setTimeout(callback, 600);
           });
       });
     } else {
