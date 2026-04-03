@@ -143,7 +143,7 @@ export default function Home() {
   };
 
   // 🎙️ 2. LE MICRO POUR L'APK ANDROID (Popup Native)
-  const listenNative = async (isConfirming: boolean) => {
+  const listenNative = async (isConfirming: boolean, tentative = 0) => {
     try {
       const { SpeechRecognition } =
         await import("@capacitor-community/speech-recognition");
@@ -157,6 +157,12 @@ export default function Home() {
 
       if (!isConfirming) {
         setStatus("listening");
+      }
+
+      // ✅ Délai de sécurité UNIQUEMENT pour la confirmation
+      // Le TTS peut encore tourner 200-300ms après le callback
+      if (isConfirming) {
+        await new Promise((resolve) => setTimeout(resolve, 800));
       }
 
       const result = await SpeechRecognition.start({
@@ -175,13 +181,18 @@ export default function Home() {
         else analyzeTextRef.current(text);
       } else {
         if (!isConfirming) setStatus("idle");
+        // Pas de résultat mais pas d'erreur : réessaie une fois
+        else if (tentative < 2) {
+          setTimeout(() => listenNative(true, tentative + 1), 500);
+        }
       }
     } catch {
-      // Si le micro rate pendant la confirmation, on réessaie une fois
-      if (isConfirming && statusRef.current === "confirming") {
-        setTimeout(() => listenNative(true), 500);
+      if (isConfirming && statusRef.current === "confirming" && tentative < 2) {
+        // Réessaie avec un délai plus long à chaque tentative
+        const delai = 600 + tentative * 400;
+        setTimeout(() => listenNative(true, tentative + 1), delai);
       } else {
-        setStatus("idle");
+        if (!isConfirming) setStatus("idle");
       }
     }
   };
@@ -439,20 +450,57 @@ export default function Home() {
         }
         return;
       } else if (data.action !== "INCONNU" && data.contact) {
+        const nomDemande = data.contact.toLowerCase().trim();
+
+        // Cherche tous les contacts qui contiennent le nom demandé
+        const contactsTrouves = Object.keys(contactsRef.current).filter(
+          (nom) => nom.includes(nomDemande) || nomDemande.includes(nom),
+        );
+
+        if (contactsTrouves.length === 0) {
+          speak(
+            `Je ne connais pas ${data.contact}. Demande à un proche de l'ajouter.`,
+          );
+          setStatus("idle");
+          return;
+        }
+
+        // ✅ Cas normal : un seul contact trouvé
+        const contactFinal =
+          contactsTrouves.length === 1
+            ? contactsTrouves[0]
+            : contactsTrouves[0]; // On commence par le premier
+
+        const dataAvecChoix =
+          contactsTrouves.length > 1
+            ? {
+                ...data,
+                contact: contactFinal,
+                choixContacts: contactsTrouves,
+                choixIndex: 0,
+              }
+            : { ...data, contact: contactFinal };
+
+        setAiResponse(dataAvecChoix);
         setStatus("confirming");
+
         let phrase = "";
+        const nomAffiche = contactFinal;
 
         if (data.action === "APPELER") {
-          phrase = `Veux-tu appeler ${data.contact} ?`;
+          phrase =
+            contactsTrouves.length > 1
+              ? `J'ai plusieurs ${data.contact}. Veux-tu appeler ${nomAffiche} ?`
+              : `Veux-tu appeler ${nomAffiche} ?`;
         } else if (data.action === "MESSAGE") {
-          phrase = `Veux-tu envoyer à ${data.contact} le message suivant : ${data.contenu} ?`;
+          phrase = `Veux-tu envoyer à ${nomAffiche} le message suivant : ${data.contenu} ?`;
         } else if (data.action === "WHATSAPP") {
-          phrase = `Veux-tu envoyer un WhatsApp à ${data.contact} avec le message : ${data.contenu} ?`;
+          phrase = `Veux-tu envoyer un WhatsApp à ${nomAffiche} avec le message : ${data.contenu} ?`;
         }
 
         speak(phrase, () => {
           if (Capacitor.isNativePlatform()) {
-            listenNative(true); // le callback TTS fire déjà après la fin du son
+            listenNative(true);
           } else {
             startWebMic(true);
           }
@@ -471,11 +519,46 @@ export default function Home() {
   };
 
   const handleConfirmation = (text: string) => {
+    const current = aiResponseRef.current;
+
+    // ✅ Mode navigation entre plusieurs contacts
+    if (current?.choixContacts) {
+      if (
+        text.includes("oui") ||
+        text.includes("d'accord") ||
+        text.includes("vas-y")
+      ) {
+        // Confirme le contact actuellement proposé
+        setAiResponse({
+          ...current,
+          contact: current.choixContacts[current.choixIndex],
+          choixContacts: undefined,
+        });
+        executeAction();
+      } else {
+        // Passe au contact suivant
+        const nextIndex = current.choixIndex + 1;
+        if (nextIndex < current.choixContacts.length) {
+          setAiResponse({ ...current, choixIndex: nextIndex });
+          speak(`Veux-tu appeler ${current.choixContacts[nextIndex]} ?`, () => {
+            if (Capacitor.isNativePlatform()) listenNative(true);
+            else startWebMic(true);
+          });
+        } else {
+          // Plus personne à proposer
+          speak("Je n'ai trouvé personne d'autre. J'annule.");
+          setStatus("idle");
+          setAiResponse(null);
+        }
+      }
+      return;
+    }
+
+    // Confirmation normale (inchangée)
     if (
       text.includes("oui") ||
       text.includes("d'accord") ||
-      text.includes("vas-y") ||
-      text.includes("oui je veux bien")
+      text.includes("vas-y")
     ) {
       executeAction();
     } else {
