@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
@@ -7,6 +8,21 @@ import { Capacitor } from "@capacitor/core";
 // Variable globale pour corriger le bug Google Chrome du "onend" qui ne se lance pas
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let globalUtterance: any = null;
+
+// ✅ FIX 2 & 4 : Recherche floue + priorité noms courts
+const normaliser = (str: string) =>
+  str.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+
+const ressemblance = (a: string, b: string): number => {
+  const na = normaliser(a);
+  const nb = normaliser(b);
+  if (na === nb) return 1;
+  if (na.includes(nb) || nb.includes(na)) return 0.9;
+  const setA = new Set(na.split(""));
+  const setB = new Set(nb.split(""));
+  const communs = [...setA].filter((c) => setB.has(c)).length;
+  return communs / Math.max(setA.size, setB.size);
+};
 
 export default function Home() {
   const [isMounted, setIsMounted] = useState(false);
@@ -38,10 +54,10 @@ export default function Home() {
 
   const [showSettings, setShowSettings] = useState(false);
   const [contacts, setContacts] = useState<Record<string, string>>({});
-  const contactsRef = useRef(contacts); // ← ajouter cette ligne
+  const contactsRef = useRef(contacts);
   useEffect(() => {
     contactsRef.current = contacts;
-  }, [contacts]); // ← et celle-ci
+  }, [contacts]);
   const [newName, setNewName] = useState("");
   const [newPhone, setNewPhone] = useState("");
 
@@ -72,13 +88,11 @@ export default function Home() {
       import("@capacitor-community/text-to-speech").then(({ TextToSpeech }) => {
         TextToSpeech.speak({ text: textePropre, lang: "fr-FR", rate: 1.0 })
           .then(() => {
-            if (callback) {
-              // ✅ Délai pour laisser Android libérer le canal audio
-              setTimeout(callback, 600);
-            }
+            // ✅ FIX 1 : 1200ms pour laisser Android libérer le canal audio
+            if (callback) setTimeout(callback, 1200);
           })
           .catch(() => {
-            if (callback) setTimeout(callback, 600);
+            if (callback) setTimeout(callback, 1200);
           });
       });
     } else {
@@ -94,7 +108,7 @@ export default function Home() {
     }
   };
 
-  // 🎙️ 1. LE MICRO POUR LE WEB (Totalement recodé, zéro bug de silence)
+  // 🎙️ 1. LE MICRO POUR LE WEB
   const startWebMic = (isConfirming: boolean) => {
     if (typeof window === "undefined") return;
     const windowAny = window as any;
@@ -134,7 +148,7 @@ export default function Home() {
         } else {
           analyzeTextRef.current(currentText);
         }
-      }, 1500); // 1.5s de silence
+      }, 1500);
     };
 
     reco.onend = () => {
@@ -145,7 +159,7 @@ export default function Home() {
     reco.start();
   };
 
-  // 🎙️ 2. LE MICRO POUR L'APK ANDROID (Popup Native)
+  // 🎙️ 2. LE MICRO POUR L'APK ANDROID
   const listenNative = async (isConfirming: boolean, tentative = 0) => {
     try {
       const { SpeechRecognition } =
@@ -160,12 +174,6 @@ export default function Home() {
 
       if (!isConfirming) {
         setStatus("listening");
-      }
-
-      // ✅ Délai de sécurité UNIQUEMENT pour la confirmation
-      // Le TTS peut encore tourner 200-300ms après le callback
-      if (isConfirming) {
-        await new Promise((resolve) => setTimeout(resolve, 800));
       }
 
       const result = await SpeechRecognition.start({
@@ -184,18 +192,20 @@ export default function Home() {
         else analyzeTextRef.current(text);
       } else {
         if (!isConfirming) setStatus("idle");
-        // Pas de résultat mais pas d'erreur : réessaie une fois
         else if (tentative < 2) {
           setTimeout(() => listenNative(true, tentative + 1), 500);
         }
+        // ✅ FIX 3 : si les 3 tentatives échouent, on reste en "confirming"
+        // pour que les boutons ✅/❌ restent visibles — on ne touche pas au status
       }
     } catch {
       if (isConfirming && statusRef.current === "confirming" && tentative < 2) {
-        // Réessaie avec un délai plus long à chaque tentative
         const delai = 600 + tentative * 400;
         setTimeout(() => listenNative(true, tentative + 1), delai);
-      } else {
-        if (!isConfirming) setStatus("idle");
+      } else if (!isConfirming) {
+        // ✅ FIX 3 : en mode confirming, on ne passe PAS en idle
+        // Les boutons ✅/❌ restent disponibles comme fallback
+        setStatus("idle");
       }
     }
   };
@@ -455,10 +465,12 @@ export default function Home() {
       } else if (data.action !== "INCONNU" && data.contact) {
         const nomDemande = data.contact.toLowerCase().trim();
 
-        // Cherche tous les contacts qui contiennent le nom demandé
-        const contactsTrouves = Object.keys(contactsRef.current).filter(
-          (nom) => nom.includes(nomDemande) || nomDemande.includes(nom),
-        );
+        // ✅ FIX 2 & 4 : Recherche floue + tri (meilleur score + nom court en premier)
+        const contactsTrouves = Object.keys(contactsRef.current)
+          .map((nom) => ({ nom, score: ressemblance(nom, nomDemande) }))
+          .filter(({ score }) => score >= 0.6)
+          .sort((a, b) => b.score - a.score || a.nom.length - b.nom.length)
+          .map(({ nom }) => nom);
 
         if (contactsTrouves.length === 0) {
           speak(
@@ -468,11 +480,7 @@ export default function Home() {
           return;
         }
 
-        // ✅ Cas normal : un seul contact trouvé
-        const contactFinal =
-          contactsTrouves.length === 1
-            ? contactsTrouves[0]
-            : contactsTrouves[0]; // On commence par le premier
+        const contactFinal = contactsTrouves[0];
 
         const dataAvecChoix =
           contactsTrouves.length > 1
@@ -488,17 +496,15 @@ export default function Home() {
         setStatus("confirming");
 
         let phrase = "";
-        const nomAffiche = contactFinal;
-
         if (data.action === "APPELER") {
           phrase =
             contactsTrouves.length > 1
-              ? `J'ai plusieurs ${data.contact}. Veux-tu appeler ${nomAffiche} ?`
-              : `Veux-tu appeler ${nomAffiche} ?`;
+              ? `J'ai plusieurs ${data.contact}. Veux-tu appeler ${contactFinal} ?`
+              : `Veux-tu appeler ${contactFinal} ?`;
         } else if (data.action === "MESSAGE") {
-          phrase = `Veux-tu envoyer à ${nomAffiche} le message suivant : ${data.contenu} ?`;
+          phrase = `Veux-tu envoyer à ${contactFinal} le message suivant : ${data.contenu} ?`;
         } else if (data.action === "WHATSAPP") {
-          phrase = `Veux-tu envoyer un WhatsApp à ${nomAffiche} avec le message : ${data.contenu} ?`;
+          phrase = `Veux-tu envoyer un WhatsApp à ${contactFinal} avec le message : ${data.contenu} ?`;
         }
 
         speak(phrase, () => {
@@ -530,7 +536,6 @@ export default function Home() {
         text.includes("d'accord") ||
         text.includes("vas-y")
       ) {
-        // ✅ FIX 1 : on passe les données directement, sans attendre le re-render React
         const dataToExecute = {
           ...current,
           contact: current.choixContacts[current.choixIndex],
@@ -541,8 +546,6 @@ export default function Home() {
       } else {
         const nextIndex = current.choixIndex + 1;
         if (nextIndex < current.choixContacts.length) {
-          // ✅ FIX 2 : on met aussi à jour "contact" dans le state
-          // sinon le ref pointe encore sur le vieux contact quand l'user dit "oui"
           setAiResponse({
             ...current,
             contact: current.choixContacts[nextIndex],
@@ -570,7 +573,6 @@ export default function Home() {
       return;
     }
 
-    // Confirmation normale
     if (
       text.includes("oui") ||
       text.includes("d'accord") ||
@@ -594,7 +596,7 @@ export default function Home() {
     }
 
     const contactNom = currentResponse.contact.toLowerCase().trim();
-    const numero = contacts[contactNom];
+    const numero = contactsRef.current[contactNom];
 
     if (!numero) {
       speak(
@@ -618,7 +620,7 @@ export default function Home() {
       } else if (currentResponse.action === "WHATSAPP") {
         let formatWa = numero.replace(/[\s\-\.]/g, "");
         if (formatWa.startsWith("0"))
-          formatWa = "32" + formatWa.substring(1); // Mettre 32 pour la Belgique
+          formatWa = "32" + formatWa.substring(1);
         else if (formatWa.startsWith("+")) formatWa = formatWa.substring(1);
         const message = encodeURIComponent(currentResponse.contenu || "");
         url = `https://wa.me/${formatWa}?text=${message}`;
@@ -808,8 +810,6 @@ export default function Home() {
       </button>
 
       <div className="mb-12 h-48 flex flex-col items-center justify-center text-center">
-        {/* On ne met plus de texte du tout, juste les animations */}
-
         {status === "listening" && (
           <div className="w-8 h-8 bg-red-500 rounded-full animate-pulse" />
         )}
@@ -818,7 +818,6 @@ export default function Home() {
           <Loader2 className="w-24 h-24 text-blue-600 animate-spin" />
         )}
 
-        {/* ✅ BOUTONS DE CONFIRMATION TACTILES (100% Icônes) */}
         {status === "confirming" && (
           <div className="flex gap-10 scale-110">
             <button
@@ -842,7 +841,6 @@ export default function Home() {
         )}
       </div>
 
-      {/* ✅ LE MICRO RESTE ROUGE PENDANT LA CONFIRMATION */}
       <button
         onClick={toggleListen}
         disabled={
