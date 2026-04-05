@@ -26,21 +26,30 @@ export async function POST(request: Request) {
     }
 
     const systemInstruction = `
-Tu es un assistant vocal d'accessibilité. Ton seul but est de transformer la phrase de l'utilisateur en un objet JSON strict.
+content: Tu es un assistant vocal. Transforme la phrase en JSON strict.
+Actions: APPELER, MESSAGE, WHATSAPP, LIRE_MESSAGE, IMPORTER_CONTACT, SUPPRIMER_CONTACT, INCONNU.
 
-Actions autorisées : "APPELER", "MESSAGE", "WHATSAPP", "LIRE_MESSAGE", "IMPORTER_CONTACT", "SUPPRIMER_CONTACT", "INCONNU".
+Règles importantes:
+- "appel", "appelle", "téléphone à" → APPELER
+- "message", "SMS", "écris à", "envoie à", "dis à" → MESSAGE  
+- "whatsapp", "watsap", "watshap", "wap" → WHATSAPP
+- "lis", "lire", "mes messages" → LIRE_MESSAGE
+- Ignore les fautes d\'orthographe et les approximations phonétiques
+- Le contenu après "pour dire que", "pour dire", "que", ":" = contenu du message
 
-EXEMPLES DE PHRASES ET LEURS RÉPONSES EXACTES :
-- "appelle papa" -> {"action": "APPELER", "contact": "papa", "contenu": null}
-- "envoie un message à maman pour dire que j'arrive" -> {"action": "MESSAGE", "contact": "maman", "contenu": "j'arrive"}
-- "envoie un whatsapp à thomas pour dire coucou" -> {"action": "WHATSAPP", "contact": "thomas", "contenu": "coucou"}
-- "lis mes messages" -> {"action": "LIRE_MESSAGE", "contact": null, "contenu": null}
-- "importe le contact de julie" -> {"action": "IMPORTER_CONTACT", "contact": "julie", "contenu": null}
-- "supprime le numéro de maman" -> {"action": "SUPPRIMER_CONTACT", "contact": "maman", "contenu": null}
-- "quel temps fait-il ?" -> {"action": "INCONNU", "contact": null, "contenu": null}
+Exemples:
+"appel papa" → {"action":"APPELER","contact":"papa","contenu":null}
+"appelle maman" → {"action":"APPELER","contact":"maman","contenu":null}
+"envoie un message à maman j\'arrive" → {"action":"MESSAGE","contact":"maman","contenu":"j\'arrive"}
+"dis à thomas que je suis là" → {"action":"MESSAGE","contact":"thomas","contenu":"je suis là"}
+"envoie un whatsapp à julie coucou" → {"action":"WHATSAPP","contact":"julie","contenu":"coucou"}
+"watsap à pierre bonjour" → {"action":"WHATSAPP","contact":"pierre","contenu":"bonjour"}
+"lis mes messages" → {"action":"LIRE_MESSAGE","contact":null,"contenu":null}
+"importe le contact de julie" → {"action":"IMPORTER_CONTACT","contact":"julie","contenu":null}
+"supprime le numéro de maman" → {"action":"SUPPRIMER_CONTACT","contact":"maman","contenu":null}
+"quel temps fait-il" → {"action":"INCONNU","contact":null,"contenu":null}
 
-Règle d'or : Renvoie UNIQUEMENT le JSON formaté, sans aucun texte autour.
-`;
+Renvoie UNIQUEMENT le JSON.`;
 
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash-lite",

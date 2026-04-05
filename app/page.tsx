@@ -1,14 +1,18 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Mic, Loader2, Check, X, Settings, Plus, Trash2, Ear } from "lucide-react";
+import { Mic, Loader2, Check, X, Settings, Plus, Trash2 } from "lucide-react";
 import { Capacitor } from "@capacitor/core";
 
 let globalUtterance: any = null;
 
 // ── Recherche floue ──────────────────────────────────────────────────────────
 const normaliser = (str: string) =>
-  str.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
+  str
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
 
 const ressemblance = (a: string, b: string): number => {
   const na = normaliser(a);
@@ -21,13 +25,20 @@ const ressemblance = (a: string, b: string): number => {
   return communs / Math.max(setA.size, setB.size);
 };
 
+// ── Calcul du délai TTS adaptatif ────────────────────────────────────────────
+// ~130 mots/min → ~460ms/mot, on ajoute 800ms de marge de sécurité
+const delaiApres = (texte: string): number => {
+  const mots = texte.trim().split(/\s+/).length;
+  return Math.max(1800, mots * 460 + 800);
+};
+
 // ── Composant principal ──────────────────────────────────────────────────────
 export default function Home() {
   const [isMounted, setIsMounted] = useState(false);
   const [status, setStatus] = useState<
     "idle" | "listening" | "thinking" | "confirming" | "executing"
   >("idle");
-  const [micListening, setMicListening] = useState(false); // indicateur micro confirmation
+  const [micListening, setMicListening] = useState(false);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [aiResponse, setAiResponse] = useState<any>(null);
@@ -36,20 +47,27 @@ export default function Home() {
   const silenceTimerRef = useRef<any>(null);
   const nativeListenerRef = useRef<any>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const watchdogRef = useRef<any>(null);
 
   const aiResponseRef = useRef<any>(null);
-  const statusRef = useRef<"idle" | "listening" | "thinking" | "confirming" | "executing">("idle");
+  const statusRef = useRef<
+    "idle" | "listening" | "thinking" | "confirming" | "executing"
+  >("idle");
   const analyzeTextRef = useRef<any>(null);
   const handleConfirmationRef = useRef<any>(null);
 
   const [showSettings, setShowSettings] = useState(false);
   const [contacts, setContacts] = useState<Record<string, string>>({});
   const contactsRef = useRef(contacts);
-  useEffect(() => { contactsRef.current = contacts; }, [contacts]);
+  useEffect(() => {
+    contactsRef.current = contacts;
+  }, [contacts]);
   const [newName, setNewName] = useState("");
   const [newPhone, setNewPhone] = useState("");
 
-  useEffect(() => { setIsMounted(true); }, []);
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   useEffect(() => {
     aiResponseRef.current = aiResponse;
@@ -62,6 +80,7 @@ export default function Home() {
   useEffect(() => {
     return () => {
       if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+      if (watchdogRef.current) clearTimeout(watchdogRef.current);
       if (abortControllerRef.current) abortControllerRef.current.abort();
     };
   }, []);
@@ -71,7 +90,7 @@ export default function Home() {
       ? "https://semaine-inter-2026.vercel.app"
       : "";
 
-  // ── TTS ───────────────────────────────────────────────────────────────────
+  // ── TTS avec délai adaptatif ──────────────────────────────────────────────
   const speak = (text: string, callback?: () => void) => {
     const textePropre = text
       .replace(/commente/gi, "comment")
@@ -79,16 +98,29 @@ export default function Home() {
 
     if (isMounted && Capacitor.isNativePlatform()) {
       import("@capacitor-community/text-to-speech").then(({ TextToSpeech }) => {
+        // On note l'heure de début pour mesurer la durée réelle
+        const debut = Date.now();
         TextToSpeech.speak({ text: textePropre, lang: "fr-FR", rate: 1.0 })
-          .then(() => { if (callback) setTimeout(callback, 1500); })
-          .catch(() => { if (callback) setTimeout(callback, 1500); });
+          .then(() => {
+            if (callback) {
+              // Durée réelle écoulée + 600ms de sécurité (micro ne capte pas la fin)
+              const dureeReelle = Date.now() - debut;
+              const extra = dureeReelle < 800 ? 1200 : 600;
+              setTimeout(callback, extra);
+            }
+          })
+          .catch(() => {
+            if (callback) setTimeout(callback, delaiApres(textePropre));
+          });
       });
     } else {
       if (typeof window !== "undefined" && "speechSynthesis" in window) {
         window.speechSynthesis.cancel();
         globalUtterance = new SpeechSynthesisUtterance(textePropre);
         globalUtterance.lang = "fr-FR";
-        globalUtterance.onend = () => { if (callback) callback(); };
+        globalUtterance.onend = () => {
+          if (callback) callback();
+        };
         window.speechSynthesis.speak(globalUtterance);
       }
     }
@@ -108,7 +140,9 @@ export default function Home() {
     }
 
     if (recognitionRef.current) {
-      try { recognitionRef.current.stop(); } catch (e) {}
+      try {
+        recognitionRef.current.stop();
+      } catch (e) {}
     }
 
     const reco = new SpeechRecognition();
@@ -142,41 +176,64 @@ export default function Home() {
 
   // ── Micro Android ─────────────────────────────────────────────────────────
   const listenNative = async (isConfirming: boolean, tentative = 0) => {
+    // Watchdog : si le micro ne répond pas en 12s, on abandonne proprement
+    if (watchdogRef.current) clearTimeout(watchdogRef.current);
+    watchdogRef.current = setTimeout(() => {
+      setMicListening(false);
+      if (!isConfirming) setStatus("idle");
+      // En confirming : les boutons restent visibles
+    }, 12000);
+
     try {
       const { SpeechRecognition } =
         await import("@capacitor-community/speech-recognition");
       const perm = await SpeechRecognition.requestPermissions();
 
       if (perm.speechRecognition !== "granted") {
+        clearTimeout(watchdogRef.current);
         alert("Autorisation micro refusée.");
         setStatus("idle");
         return;
       }
 
       if (!isConfirming) setStatus("listening");
-      setMicListening(isConfirming);
+      setMicListening(true);
 
       const result = await SpeechRecognition.start({
         language: "fr-FR",
+        maxResults: 1,
         partialResults: false,
         popup: false,
       });
 
+      clearTimeout(watchdogRef.current);
       setMicListening(false);
 
-      if (result?.matches && result.matches.length > 0 && result.matches[0].trim() !== "") {
-        const text = result.matches[0].toLowerCase().trim();
+      const texteCapte = result?.matches?.[0]?.trim() ?? "";
+
+      if (texteCapte !== "") {
+        const text = texteCapte.toLowerCase();
         if (isConfirming) handleConfirmationRef.current(text);
         else analyzeTextRef.current(text);
       } else {
-        if (!isConfirming) setStatus("idle");
-        // Réessaie silencieusement — les boutons restent visibles
-        else if (tentative < 2) {
+        // Android a coupé sans rien capter
+        if (!isConfirming) {
+          if (tentative < 1) {
+            // 1 retry silencieux
+            speak("Je n'ai pas entendu, réessaie.", () =>
+              listenNative(false, tentative + 1),
+            );
+          } else {
+            setStatus("idle");
+          }
+        } else if (tentative < 2) {
+          // En confirmation : retry sans message (boutons toujours là)
           setTimeout(() => listenNative(true, tentative + 1), 500);
         }
-        // Après 3 tentatives : boutons ✅/❌ toujours là, on ne change pas le status
+        // Après max tentatives : on reste en confirming → boutons visibles
       }
     } catch {
+      clearTimeout(watchdogRef.current);
       setMicListening(false);
       if (isConfirming && statusRef.current === "confirming" && tentative < 2) {
         const delai = 800 + tentative * 500;
@@ -184,7 +241,6 @@ export default function Home() {
       } else if (!isConfirming) {
         setStatus("idle");
       }
-      // En confirming : on reste en confirming → boutons toujours visibles
     }
   };
 
@@ -196,14 +252,19 @@ export default function Home() {
         const { Contacts } = await import("@capacitor-community/contacts");
         const permission = await Contacts.requestPermissions();
         if (permission.contacts === "granted") {
-          const result = await Contacts.getContacts({ projection: { name: true, phones: true } });
+          const result = await Contacts.getContacts({
+            projection: { name: true, phones: true },
+          });
           const newBatch: Record<string, string> = { ...contactsRef.current };
           result.contacts.forEach((c) => {
             const displayName = c.name?.display;
             const firstPhone = c.phones?.[0]?.number;
             if (displayName && firstPhone) {
               try {
-                newBatch[displayName.toLowerCase().trim()] = firstPhone.replace(/[\s\-\.]/g, "");
+                newBatch[displayName.toLowerCase().trim()] = firstPhone.replace(
+                  /[\s\-\.]/g,
+                  "",
+                );
               } catch {}
             }
           });
@@ -220,7 +281,9 @@ export default function Home() {
         const { Contacts } = await import("@capacitor-community/contacts");
         const permission = await Contacts.requestPermissions();
         if (permission.contacts === "granted") {
-          const result = await Contacts.getContacts({ projection: { name: true, phones: true } });
+          const result = await Contacts.getContacts({
+            projection: { name: true, phones: true },
+          });
           const newBatch: Record<string, string> = { ...contacts };
           let count = 0;
           result.contacts.forEach((c) => {
@@ -228,7 +291,10 @@ export default function Home() {
             const firstPhone = c.phones?.[0]?.number;
             if (displayName && firstPhone) {
               try {
-                newBatch[displayName.toLowerCase().trim()] = firstPhone.replace(/[\s\-\.]/g, "");
+                newBatch[displayName.toLowerCase().trim()] = firstPhone.replace(
+                  /[\s\-\.]/g,
+                  "",
+                );
                 count++;
               } catch {}
             }
@@ -242,12 +308,17 @@ export default function Home() {
       } else {
         const navAny = navigator as any;
         if (navAny.contacts && navAny.contacts.select) {
-          const selected = await navAny.contacts.select(["name", "tel"], { multiple: true });
+          const selected = await navAny.contacts.select(["name", "tel"], {
+            multiple: true,
+          });
           if (selected.length > 0) {
             const newBatch: Record<string, string> = { ...contacts };
             selected.forEach((c: any) => {
               if (c.name && c.tel && c.tel.length > 0) {
-                newBatch[c.name[0].toLowerCase().trim()] = c.tel[0].replace(/[\s\-\.]/g, "");
+                newBatch[c.name[0].toLowerCase().trim()] = c.tel[0].replace(
+                  /[\s\-\.]/g,
+                  "",
+                );
               }
             });
             setContacts(newBatch);
@@ -277,7 +348,9 @@ export default function Home() {
       }
     };
     initApp();
-    return () => { if (handler) handler.remove(); };
+    return () => {
+      if (handler) handler.remove();
+    };
   }, [isMounted, syncContactsSilently]);
 
   // ── Analyse IA ────────────────────────────────────────────────────────────
@@ -290,9 +363,11 @@ export default function Home() {
 
     setStatus("thinking");
 
-    // Timeout 8 secondes
     abortControllerRef.current = new AbortController();
-    const timeoutId = setTimeout(() => abortControllerRef.current?.abort(), 8000);
+    const timeoutId = setTimeout(
+      () => abortControllerRef.current?.abort(),
+      8000,
+    );
 
     try {
       const response = await fetch(`${API_BASE_URL}/api/gemini`, {
@@ -319,17 +394,27 @@ export default function Home() {
           const smsReq = await fetch(`${API_BASE_URL}/api/receive-sms`);
           if (smsReq.ok) {
             const smsData = await smsReq.json();
-            const savedName = Object.keys(contacts).find((key) => contacts[key] === smsData.sender);
-            speak(`Tu as un message de ${savedName ?? smsData.sender} qui dit : ${smsData.message}`, () => setStatus("idle"));
+            const savedName = Object.keys(contactsRef.current).find(
+              (key) => contactsRef.current[key] === smsData.sender,
+            );
+            speak(
+              `Tu as un message de ${savedName ?? smsData.sender} qui dit : ${smsData.message}`,
+              () => setStatus("idle"),
+            );
           } else {
             speak("Tu n'as aucun nouveau message.", () => setStatus("idle"));
           }
         } catch {
-          speak("Désolé, je n'ai pas pu vérifier tes messages.", () => setStatus("idle"));
+          speak("Désolé, je n'ai pas pu vérifier tes messages.", () =>
+            setStatus("idle"),
+          );
         }
         return;
-
-      } else if (data.action === "AJOUTER_CONTACT" && data.contact && data.numero) {
+      } else if (
+        data.action === "AJOUTER_CONTACT" &&
+        data.contact &&
+        data.numero
+      ) {
         setStatus("executing");
         const nomPropre = data.contact.toLowerCase().trim();
         const numPropre = data.numero.replace(/[\s\-\.]/g, "");
@@ -338,9 +423,11 @@ export default function Home() {
           localStorage.setItem("hub_contacts", JSON.stringify(updated));
           return updated;
         });
-        speak(`C'est noté. Le numéro de ${data.contact} a bien été enregistré.`, () => setStatus("idle"));
+        speak(
+          `C'est noté. Le numéro de ${data.contact} a bien été enregistré.`,
+          () => setStatus("idle"),
+        );
         return;
-
       } else if (data.action === "IMPORTER_CONTACT" && data.contact) {
         setStatus("executing");
         const nomRecherche = data.contact.toLowerCase().trim();
@@ -349,52 +436,73 @@ export default function Home() {
             const { Contacts } = await import("@capacitor-community/contacts");
             const permission = await Contacts.requestPermissions();
             if (permission.contacts === "granted") {
-              const result = await Contacts.getContacts({ projection: { name: true, phones: true } });
+              const result = await Contacts.getContacts({
+                projection: { name: true, phones: true },
+              });
               const contactTrouve = result.contacts.find(
-                (c) => c.name?.display?.toLowerCase().includes(nomRecherche) && c.phones?.length
+                (c) =>
+                  c.name?.display?.toLowerCase().includes(nomRecherche) &&
+                  c.phones?.length,
               );
               if (contactTrouve?.phones?.[0]) {
-                const numPropre = contactTrouve.phones[0].number.replace(/[\s\-\.]/g, "");
+                const numPropre = contactTrouve.phones[0].number.replace(
+                  /[\s\-\.]/g,
+                  "",
+                );
                 setContacts((prev) => {
                   const updated = { ...prev, [nomRecherche]: numPropre };
                   localStorage.setItem("hub_contacts", JSON.stringify(updated));
                   return updated;
                 });
-                speak(`C'est fait. J'ai trouvé ${data.contact} dans ton téléphone.`, () => setStatus("idle"));
+                speak(
+                  `C'est fait. J'ai trouvé ${data.contact} dans ton téléphone.`,
+                  () => setStatus("idle"),
+                );
               } else {
-                speak(`Je n'ai pas trouvé de numéro pour ${data.contact} dans ton répertoire.`, () => setStatus("idle"));
+                speak(
+                  `Je n'ai pas trouvé de numéro pour ${data.contact} dans ton répertoire.`,
+                  () => setStatus("idle"),
+                );
               }
             } else {
-              speak("Je n'ai pas l'autorisation de lire tes contacts.", () => setStatus("idle"));
+              speak("Je n'ai pas l'autorisation de lire tes contacts.", () =>
+                setStatus("idle"),
+              );
             }
           } else {
-            speak("Cette fonction n'est pas possible sur le site web.", () => setStatus("idle"));
+            speak("Cette fonction n'est pas possible sur le site web.", () =>
+              setStatus("idle"),
+            );
           }
         } catch {
-          speak("Il y a eu un problème lors de la recherche du contact.", () => setStatus("idle"));
+          speak("Il y a eu un problème lors de la recherche du contact.", () =>
+            setStatus("idle"),
+          );
         }
         return;
-
       } else if (data.action === "SUPPRIMER_CONTACT" && data.contact) {
         setStatus("executing");
         const nomPropre = data.contact.toLowerCase().trim();
-        if (contacts[nomPropre]) {
+        if (contactsRef.current[nomPropre]) {
           setContacts((prev) => {
             const updated = { ...prev };
             delete updated[nomPropre];
             localStorage.setItem("hub_contacts", JSON.stringify(updated));
             return updated;
           });
-          speak(`C'est fait, j'ai effacé ${data.contact} de ma mémoire.`, () => setStatus("idle"));
+          speak(`C'est fait, j'ai effacé ${data.contact} de ma mémoire.`, () =>
+            setStatus("idle"),
+          );
         } else {
-          speak(`Je n'ai pas trouvé ${data.contact} dans ton répertoire rapide.`, () => setStatus("idle"));
+          speak(
+            `Je n'ai pas trouvé ${data.contact} dans ton répertoire rapide.`,
+            () => setStatus("idle"),
+          );
         }
         return;
-
       } else if (data.action !== "INCONNU" && data.contact) {
         const nomDemande = data.contact.toLowerCase().trim();
 
-        // Recherche floue + priorité noms courts
         const contactsTrouves = Object.keys(contactsRef.current)
           .map((nom) => ({ nom, score: ressemblance(nom, nomDemande) }))
           .filter(({ score }) => score >= 0.6)
@@ -402,24 +510,33 @@ export default function Home() {
           .map(({ nom }) => nom);
 
         if (contactsTrouves.length === 0) {
-          speak(`Je ne connais pas ${data.contact}. Demande à un proche de l'ajouter.`);
+          speak(
+            `Je ne connais pas ${data.contact}. Demande à un proche de l'ajouter.`,
+          );
           setStatus("idle");
           return;
         }
 
         const contactFinal = contactsTrouves[0];
-        const dataAvecChoix = contactsTrouves.length > 1
-          ? { ...data, contact: contactFinal, choixContacts: contactsTrouves, choixIndex: 0 }
-          : { ...data, contact: contactFinal };
+        const dataAvecChoix =
+          contactsTrouves.length > 1
+            ? {
+                ...data,
+                contact: contactFinal,
+                choixContacts: contactsTrouves,
+                choixIndex: 0,
+              }
+            : { ...data, contact: contactFinal };
 
         setAiResponse(dataAvecChoix);
         setStatus("confirming");
 
         let phrase = "";
         if (data.action === "APPELER") {
-          phrase = contactsTrouves.length > 1
-            ? `J'ai plusieurs ${data.contact}. Veux-tu appeler ${contactFinal} ?`
-            : `Veux-tu appeler ${contactFinal} ?`;
+          phrase =
+            contactsTrouves.length > 1
+              ? `J'ai plusieurs ${data.contact}. Veux-tu appeler ${contactFinal} ?`
+              : `Veux-tu appeler ${contactFinal} ?`;
         } else if (data.action === "MESSAGE") {
           phrase = `Veux-tu envoyer à ${contactFinal} le message : ${data.contenu} ?`;
         } else if (data.action === "WHATSAPP") {
@@ -430,12 +547,10 @@ export default function Home() {
           if (Capacitor.isNativePlatform()) listenNative(true);
           else startWebMic(true);
         });
-
       } else {
         speak("Je n'ai pas compris ta demande. Peux-tu répéter autrement ?");
         setStatus("idle");
       }
-
     } catch (error: any) {
       clearTimeout(timeoutId);
       if (error?.name === "AbortError") {
@@ -452,7 +567,11 @@ export default function Home() {
     const current = aiResponseRef.current;
 
     if (current?.choixContacts) {
-      if (text.includes("oui") || text.includes("d'accord") || text.includes("vas-y")) {
+      if (
+        text.includes("oui") ||
+        text.includes("d'accord") ||
+        text.includes("vas-y")
+      ) {
         const dataToExecute = {
           ...current,
           contact: current.choixContacts[current.choixIndex],
@@ -463,12 +582,19 @@ export default function Home() {
       } else {
         const nextIndex = current.choixIndex + 1;
         if (nextIndex < current.choixContacts.length) {
-          setAiResponse({ ...current, contact: current.choixContacts[nextIndex], choixIndex: nextIndex });
+          setAiResponse({
+            ...current,
+            contact: current.choixContacts[nextIndex],
+            choixIndex: nextIndex,
+          });
 
           let phrase = "";
-          if (current.action === "APPELER") phrase = `Veux-tu appeler ${current.choixContacts[nextIndex]} ?`;
-          else if (current.action === "MESSAGE") phrase = `Veux-tu envoyer un message à ${current.choixContacts[nextIndex]} ?`;
-          else if (current.action === "WHATSAPP") phrase = `Veux-tu envoyer un WhatsApp à ${current.choixContacts[nextIndex]} ?`;
+          if (current.action === "APPELER")
+            phrase = `Veux-tu appeler ${current.choixContacts[nextIndex]} ?`;
+          else if (current.action === "MESSAGE")
+            phrase = `Veux-tu envoyer un message à ${current.choixContacts[nextIndex]} ?`;
+          else if (current.action === "WHATSAPP")
+            phrase = `Veux-tu envoyer un WhatsApp à ${current.choixContacts[nextIndex]} ?`;
 
           speak(phrase, () => {
             if (Capacitor.isNativePlatform()) listenNative(true);
@@ -483,7 +609,11 @@ export default function Home() {
       return;
     }
 
-    if (text.includes("oui") || text.includes("d'accord") || text.includes("vas-y")) {
+    if (
+      text.includes("oui") ||
+      text.includes("d'accord") ||
+      text.includes("vas-y")
+    ) {
       executeAction();
     } else {
       speak("D'accord, j'annule.");
@@ -506,13 +636,19 @@ export default function Home() {
     const numero = contactsRef.current[contactNom];
 
     if (!numero) {
-      speak(`Je n'ai pas le numéro de ${contactNom} dans ma mémoire. Demande à un proche de l'ajouter.`);
+      speak(
+        `Je n'ai pas le numéro de ${contactNom} dans ma mémoire. Demande à un proche de l'ajouter.`,
+      );
       setStatus("idle");
       return;
     }
 
     setStatus("executing");
-    speak(currentResponse.action === "APPELER" ? "J'appelle." : "J'envoie le message.");
+    speak(
+      currentResponse.action === "APPELER"
+        ? "J'appelle."
+        : "J'envoie le message.",
+    );
 
     setTimeout(async () => {
       let url = "";
@@ -547,14 +683,21 @@ export default function Home() {
   const toggleListen = () => {
     if (status === "idle") {
       setStatus("listening");
-      speak("Comment puis-je vous aider aujourd'hui ?", () => {
+      speak("Comment puis-je vous aider ?", () => {
         if (Capacitor.isNativePlatform()) listenNative(false);
         else startWebMic(false);
       });
     } else {
       if (Capacitor.isNativePlatform()) {
-        if (nativeListenerRef.current) { nativeListenerRef.current.remove(); nativeListenerRef.current = null; }
-        import("@capacitor-community/speech-recognition").then(({ SpeechRecognition }) => { SpeechRecognition.stop(); });
+        if (nativeListenerRef.current) {
+          nativeListenerRef.current.remove();
+          nativeListenerRef.current = null;
+        }
+        import("@capacitor-community/speech-recognition").then(
+          ({ SpeechRecognition }) => {
+            SpeechRecognition.stop();
+          },
+        );
       } else {
         if (recognitionRef.current) recognitionRef.current.stop();
       }
@@ -590,8 +733,13 @@ export default function Home() {
     return (
       <main className="flex min-h-[100dvh] flex-col bg-slate-50 p-6">
         <div className="flex justify-between items-center mb-8">
-          <h1 className="text-2xl font-bold text-slate-800">Configuration Aidant</h1>
-          <button onClick={() => setShowSettings(false)} className="p-2 bg-slate-200 rounded-full">
+          <h1 className="text-2xl font-bold text-slate-800">
+            Configuration Aidant
+          </h1>
+          <button
+            onClick={() => setShowSettings(false)}
+            className="p-2 bg-slate-200 rounded-full"
+          >
             <X className="w-6 h-6 text-slate-600" />
           </button>
         </div>
@@ -603,48 +751,77 @@ export default function Home() {
           >
             <Plus className="w-6 h-6" /> Importer le répertoire
           </button>
-          <p className="text-xs text-slate-400 mt-2 text-center">S&apos;adapte automatiquement</p>
+          <p className="text-xs text-slate-400 mt-2 text-center">
+            S&apos;adapte automatiquement
+          </p>
         </div>
 
         <div className="bg-white p-4 rounded-xl shadow-sm mb-8 border border-slate-100">
           <h2 className="font-bold text-slate-700 mb-4 flex items-center gap-2">
             <Plus className="w-4 h-4" /> Ajouter manuellement
           </h2>
-          <input type="text" placeholder="Nom (ex: Maman)" value={newName}
+          <input
+            type="text"
+            placeholder="Nom (ex: Maman)"
+            value={newName}
             onChange={(e) => setNewName(e.target.value)}
-            className="w-full p-3 mb-3 border rounded-lg bg-slate-50 focus:ring-2 focus:ring-blue-500 outline-none" />
-          <input type="tel" placeholder="Numéro (ex: 0475123456)" value={newPhone}
+            className="w-full p-3 mb-3 border rounded-lg bg-slate-50 focus:ring-2 focus:ring-blue-500 outline-none"
+          />
+          <input
+            type="tel"
+            placeholder="Numéro (ex: 0475123456)"
+            value={newPhone}
             onChange={(e) => setNewPhone(e.target.value)}
-            className="w-full p-3 mb-3 border rounded-lg bg-slate-50 focus:ring-2 focus:ring-blue-500 outline-none" />
-          <button onClick={handleAddContact}
-            className="w-full p-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition-colors">
+            className="w-full p-3 mb-3 border rounded-lg bg-slate-50 focus:ring-2 focus:ring-blue-500 outline-none"
+          />
+          <button
+            onClick={handleAddContact}
+            className="w-full p-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition-colors"
+          >
             Ajouter ce contact
           </button>
         </div>
 
         <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-100 flex-1">
           <div className="flex justify-between items-center mb-4">
-            <h2 className="font-bold text-slate-700">Contacts en mémoire ({Object.entries(contacts).length})</h2>
+            <h2 className="font-bold text-slate-700">
+              Contacts en mémoire ({Object.entries(contacts).length})
+            </h2>
             {Object.entries(contacts).length > 0 && (
               <button
-                onClick={() => { if (confirm("Tout effacer ?")) { setContacts({}); localStorage.removeItem("hub_contacts"); } }}
-                className="text-xs text-red-400 hover:text-red-600 underline">
+                onClick={() => {
+                  if (confirm("Tout effacer ?")) {
+                    setContacts({});
+                    localStorage.removeItem("hub_contacts");
+                  }
+                }}
+                className="text-xs text-red-400 hover:text-red-600 underline"
+              >
                 Tout vider
               </button>
             )}
           </div>
           <div className="space-y-2 overflow-y-auto max-h-[40vh]">
             {Object.entries(contacts).length === 0 ? (
-              <p className="text-slate-400 text-sm text-center py-8 italic">Aucun contact enregistré.</p>
+              <p className="text-slate-400 text-sm text-center py-8 italic">
+                Aucun contact enregistré.
+              </p>
             ) : (
               Object.entries(contacts).map(([nom, num]) => (
-                <div key={nom} className="flex justify-between items-center p-3 bg-slate-50 rounded-lg border border-slate-100">
+                <div
+                  key={nom}
+                  className="flex justify-between items-center p-3 bg-slate-50 rounded-lg border border-slate-100"
+                >
                   <div className="overflow-hidden">
-                    <p className="font-bold capitalize text-slate-800 truncate">{nom}</p>
+                    <p className="font-bold capitalize text-slate-800 truncate">
+                      {nom}
+                    </p>
                     <p className="text-sm text-slate-500">{num}</p>
                   </div>
-                  <button onClick={() => handleDeleteContact(nom)}
-                    className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors">
+                  <button
+                    onClick={() => handleDeleteContact(nom)}
+                    className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                  >
                     <Trash2 className="w-5 h-5" />
                   </button>
                 </div>
@@ -659,13 +836,14 @@ export default function Home() {
   // ── Page principale ───────────────────────────────────────────────────────
   return (
     <main className="flex h-[100dvh] flex-col items-center justify-center bg-slate-50 p-6 relative">
-      <button onClick={() => setShowSettings(true)}
-        className="absolute top-6 right-6 p-3 text-slate-300 hover:text-slate-500 transition-colors">
+      <button
+        onClick={() => setShowSettings(true)}
+        className="absolute top-6 right-6 p-3 text-slate-300 hover:text-slate-500 transition-colors"
+      >
         <Settings className="w-8 h-8" />
       </button>
 
       <div className="mb-12 h-56 flex flex-col items-center justify-center text-center gap-6">
-
         {status === "listening" && (
           <div className="w-8 h-8 bg-red-500 rounded-full animate-pulse" />
         )}
@@ -679,20 +857,21 @@ export default function Home() {
             <div className="flex gap-10 scale-110">
               <button
                 onClick={() => handleConfirmation("oui")}
-                className="flex items-center justify-center p-6 bg-green-100 border-4 border-green-500 rounded-full shadow-lg active:scale-90 transition-transform">
+                className="flex items-center justify-center p-6 bg-green-100 border-4 border-green-500 rounded-full shadow-lg active:scale-90 transition-transform"
+              >
                 <Check className="w-16 h-16 text-green-600" />
               </button>
               <button
                 onClick={() => handleConfirmation("non")}
-                className="flex items-center justify-center p-6 bg-red-100 border-4 border-red-500 rounded-full shadow-lg active:scale-90 transition-transform">
+                className="flex items-center justify-center p-6 bg-red-100 border-4 border-red-500 rounded-full shadow-lg active:scale-90 transition-transform"
+              >
                 <X className="w-16 h-16 text-red-600" />
               </button>
             </div>
 
-            {/* ✅ Indicateur micro pendant confirmation */}
             {micListening && (
               <div className="flex items-center gap-2 text-blue-500 text-sm font-medium animate-pulse">
-                <Ear className="w-5 h-5" />
+                <Mic className="w-5 h-5" />
                 <span>J&apos;écoute ta réponse…</span>
               </div>
             )}
@@ -706,11 +885,17 @@ export default function Home() {
 
       <button
         onClick={toggleListen}
-        disabled={status === "confirming" || status === "thinking" || status === "executing"}
+        disabled={
+          status === "confirming" ||
+          status === "thinking" ||
+          status === "executing"
+        }
         className={`w-64 h-64 rounded-full shadow-2xl transition-all duration-500 flex items-center justify-center 
-          ${status === "listening" || status === "confirming"
-            ? "bg-red-500 scale-110 shadow-red-500/50"
-            : "bg-blue-600 active:scale-95"}
+          ${
+            status === "listening" || status === "confirming"
+              ? "bg-red-500 scale-110 shadow-red-500/50"
+              : "bg-blue-600 active:scale-95"
+          }
           ${status === "thinking" || status === "executing" ? "opacity-20 grayscale" : ""}
         `}
       >
